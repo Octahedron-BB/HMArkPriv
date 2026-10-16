@@ -56,6 +56,20 @@ mod_macro_handle() {
             RC=0
             return 0
             ;;
+        "@HOTSPOT")
+            # Rapid toggle via HarmonyOS Control Center
+            # 1. Pull down Control Center from top-right corner
+            uinput -T -m 1100 50 1100 800 200 >/dev/null 2>&1
+            sleep 0.2
+            # 2. Click Hotspot quick tile position (Control Center expanded tile)
+            uinput -T -c 630 1120 >/dev/null 2>&1
+            sleep 0.15
+            # 3. Dismiss Control Center
+            uinput -K -d 2 -u 2 >/dev/null 2>&1
+            OUT="OK: Rapid Hotspot toggle executed via Control Center."
+            RC=0
+            return 0
+            ;;
         *)
             return 1
             ;;

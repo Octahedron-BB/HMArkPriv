@@ -407,6 +407,9 @@
     <button class="btn-action" onclick="runQuickAction('@WAKEUP')">
       ☀️ <span>唤醒屏幕</span>
     </button>
+    <button class="btn-action" onclick="runQuickAction('@HOTSPOT')">
+      📶 <span>极速切换热点</span>
+    </button>
     <button class="btn-action" onclick="runQuickAction('@TAP 630 1400')">
       🎯 <span>屏幕居中点击</span>
     </button>
@@ -484,7 +487,23 @@ async function startAutoPolling() {
 
       document.getElementById('statPid').innerText = data.pid || '运行中';
       document.getElementById('statUid').innerText = (data.uid || '2000') + ' (' + (data.user || 'shell') + ')';
-      document.getElementById('statCharge').innerText = data.charging_state || '未知';
+      let cStr = '未充电';
+      let cClass = 'amber';
+      if (data.charging_state === 'charging') {
+        cStr = '⚡ 充电中 (常亮激活)';
+        cClass = 'green';
+      } else if (data.charging_state === 'discharging') {
+        cStr = '未充电 (放电中)';
+        cClass = 'amber';
+      } else if (data.charging_state === 'manual_on') {
+        cStr = '强制常亮';
+        cClass = 'blue';
+      } else if (data.charging_state) {
+        cStr = data.charging_state;
+      }
+      const el = document.getElementById('statCharge');
+      el.innerText = cStr;
+      el.className = 'stat-value ' + cClass;
       document.getElementById('statAdskipCount').innerText = (data.adskip_count || 0) + ' 次';
       document.getElementById('statActiveApp').innerText = data.last_active_app || '(无活跃应用)';
       document.getElementById('lastUpdate').innerText = '已同步: ' + (data.updated_at ? data.updated_at.split(' ')[1] : '');

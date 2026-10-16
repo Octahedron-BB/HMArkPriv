@@ -48,6 +48,7 @@ Subcommands:
                        Inject global swipe gesture
   wakeup               Wake screen display
   suspend              Turn screen off
+  hotspot              Rapid toggle Wi-Fi personal hotspot
   topwin               Show current focused window and app
   sms                  View latest captured SMS events
   log [ad|sms|main]    View recent framework logs
@@ -125,6 +126,9 @@ case "$SUBCMD" in
         ;;
     suspend)
         send_rpc "@SUSPEND"
+        ;;
+    hotspot)
+        send_rpc "@HOTSPOT"
         ;;
     topwin)
         send_rpc "@TOPWIN"

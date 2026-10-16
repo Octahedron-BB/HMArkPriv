@@ -18,24 +18,38 @@ mod_keepawake_init() {
 mod_keepawake_poll() {
     [ "${MODULE_KEEPAWAKE}" != "1" ] && return 0
 
-    # Query latest charging notification from hilog
-    CHG_LINE=$(hilog -x -T FusionSearchCore 2>/dev/null | grep -E 'NotifyChargeState: [0-9]' | tail -n 1)
-    if [ -n "${CHG_LINE}" ]; then
-        STATE_VAL=$(echo "${CHG_LINE}" | sed -n 's/.*NotifyChargeState: *\([0-9]\).*/\1/p')
-        case "${STATE_VAL}" in
-            "1"|"2"|"3")
+    CUR_STATE=""
+    # Method 1: Check hardware kernel log (bq2560x_charger / direct_charge)
+    KMSG_LINE=$(hilog -x -t kmsg 2>/dev/null | grep 'check_charger_plugged' | tail -n 1)
+    if [ -n "${KMSG_LINE}" ]; then
+        case "${KMSG_LINE}" in
+            *"=0x1"*)
                 CUR_STATE="charging"
                 ;;
-            "0")
+            *"=0x0"*)
                 CUR_STATE="discharging"
                 ;;
-            *)
-                CUR_STATE="${CHARGE_STATE}"
-                ;;
         esac
-    else
-        CUR_STATE="${CHARGE_STATE}"
     fi
+
+    # Method 2: Fallback to FusionSearchCore / SysUI charge notifications
+    if [ -z "${CUR_STATE}" ]; then
+        CHG_LINE=$(hilog -x -T FusionSearchCore 2>/dev/null | grep -E 'NotifyChargeState: [0-9]' | tail -n 1)
+        if [ -n "${CHG_LINE}" ]; then
+            STATE_VAL=$(echo "${CHG_LINE}" | sed -n 's/.*NotifyChargeState: *\([0-9]\).*/\1/p')
+            case "${STATE_VAL}" in
+                "1"|"2"|"3")
+                    CUR_STATE="charging"
+                    ;;
+                "0")
+                    CUR_STATE="discharging"
+                    ;;
+            esac
+        fi
+    fi
+
+    # Default to previous state if nothing parsed
+    [ -z "${CUR_STATE}" ] && CUR_STATE="${CHARGE_STATE}"
 
     if [ "${CUR_STATE}" != "${PREV_CHARGE_STATE}" ] && [ -n "${CUR_STATE}" ]; then
         PREV_CHARGE_STATE="${CUR_STATE}"
