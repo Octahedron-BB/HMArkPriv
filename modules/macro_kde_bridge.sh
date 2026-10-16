@@ -73,6 +73,12 @@ mod_macro_handle() {
             RC=0
             return 0
             ;;
+        "@NOTIFICATION_SETTINGS")
+            aa start -b com.android.settings -a com.android.settings.Settings\$NotificationAccessSettingsActivity >/dev/null 2>&1
+            RC=$?
+            OUT="OK: Opened Android Notification Access Settings page."
+            return 0
+            ;;
         *)
             return 1
             ;;
