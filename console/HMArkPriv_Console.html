@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>HMArkPriv 控制中心 (HarmonyOS 7.0)</title>
+<style>
+  :root {
+    --bg: #090d16;
+    --card: #131c2e;
+    --card-hover: #1a273f;
+    --accent: #38bdf8;
+    --accent-glow: rgba(56, 189, 248, 0.25);
+    --success: #10b981;
+    --danger: #ef4444;
+    --warning: #f59e0b;
+    --text: #f8fafc;
+    --text-sub: #94a3b8;
+    --border: #1e293b;
+    --border-bright: #334155;
+    --switch-bg: #334155;
+    --radius: 16px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0;
+    padding: 16px 14px 40px;
+    font-family: -apple-system, BlinkMacSystemFont, "HarmonyOS Sans SC", "PingFang SC", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.4;
+    overflow-x: hidden;
+  }
+  .header {
+    background: linear-gradient(135deg, #0369a1 0%, #1e3a8a 100%);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    margin-bottom: 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 10px 25px -5px rgba(2, 132, 199, 0.3);
+  }
+  .header-info h1 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .header-info p {
+    margin: 4px 0 0;
+    font-size: 12px;
+    color: #bae6fd;
+    font-weight: 400;
+  }
+  .pulse-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(16, 185, 129, 0.2);
+    border: 1px solid rgba(16, 185, 129, 0.5);
+    color: #34d399;
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .pulse-dot {
+    width: 8px;
+    height: 8px;
+    background: #34d399;
+    border-radius: 50%;
+    box-shadow: 0 0 10px #34d399;
+    animation: pulse 1.8s infinite;
+  }
+  @keyframes pulse {
+    0% { transform: scale(0.9); opacity: 0.7; }
+    50% { transform: scale(1.3); opacity: 1; }
+    100% { transform: scale(0.9); opacity: 0.7; }
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .card-title {
+    margin: 0 0 14px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .connect-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #0f172a;
+    border: 1px dashed var(--border-bright);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 14px;
+  }
+  .connect-bar .desc {
+    font-size: 13px;
+    color: var(--text-sub);
+  }
+  .btn-connect {
+    background: var(--accent);
+    color: #090d16;
+    border: none;
+    border-radius: 10px;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+  .stat-box {
+    background: #0c1322;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+  }
+  .stat-label {
+    font-size: 11px;
+    color: var(--text-sub);
+    margin-bottom: 4px;
+  }
+  .stat-value {
+    font-size: 15px;
+    font-weight: 700;
+    color: #e2e8f0;
+    font-family: "JetBrains Mono", Consolas, monospace;
+    word-break: break-all;
+  }
+  .stat-value.green { color: #34d399; }
+  .stat-value.blue { color: #38bdf8; }
+  .stat-value.amber { color: #fbbf24; }
+  .switch-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .switch-row:last-child { border-bottom: none; }
+  .switch-info { max-width: 75%; }
+  .switch-title { font-size: 15px; font-weight: 600; color: var(--text); }
+  .switch-desc { font-size: 12px; color: var(--text-sub); margin-top: 2px; }
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 52px;
+    height: 30px;
+    flex-shrink: 0;
+  }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: var(--switch-bg);
+    transition: .3s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 34px;
+  }
+  .slider:before {
+    position: absolute;
+    content: "";
+    height: 24px;
+    width: 24px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .3s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 50%;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+  }
+  input:checked + .slider { background-color: var(--success); }
+  input:checked + .slider:before { transform: translateX(22px); }
+  .action-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  .btn-action {
+    background: #0f172a;
+    border: 1px solid var(--border-bright);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: left;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+  }
+  .btn-action:active { background: var(--card-hover); border-color: var(--accent); }
+  .terminal-box {
+    background: #070a12;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .cmd-input-group {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: #0d1527;
+  }
+  .cmd-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: #38bdf8;
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 13px;
+    padding: 10px 12px;
+    outline: none;
+  }
+  .cmd-submit {
+    background: var(--accent);
+    color: #090d16;
+    border: none;
+    padding: 0 16px;
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .terminal-out {
+    padding: 12px;
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 12px;
+    color: #93c5fd;
+    white-space: pre-wrap;
+    max-height: 220px;
+    overflow-y: auto;
+    min-height: 60px;
+  }
+  .chips {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 6px;
+    margin-bottom: 10px;
+  }
+  .chip {
+    background: #1e293b;
+    border: 1px solid var(--border-bright);
+    color: #94a3b8;
+    border-radius: 8px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-family: monospace;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(15, 23, 42, 0.95);
+    border: 1px solid var(--accent);
+    color: var(--text);
+    padding: 10px 18px;
+    border-radius: 999px;
+    font-size: 13px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    z-index: 9999;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-info">
+    <h1>⚡ HMArkPriv 控制中心</h1>
+    <p>HarmonyOS 7.0 模块化特权中继框架</p>
+  </div>
+  <div class="pulse-badge">
+    <span class="pulse-dot"></span>
+    <span id="daemonStatusText">已连接</span>
+  </div>
+</div>
+
+<div class="connect-bar" id="connectSection">
+  <div class="desc" id="connectHint">
+    📁 授权 <b>Download/HMArkPriv</b> 开启全自动实时状态同步
+  </div>
+  <button class="btn-connect" onclick="requestBusDir()">
+    🔗 连接总线
+  </button>
+</div>
+
+<!-- 1. Real-time Status -->
+<div class="card">
+  <div class="card-title">
+    <span>系统框架状态</span>
+    <span style="font-size:11px; color:var(--text-sub);" id="lastUpdate">实时轮询中...</span>
+  </div>
+  <div class="stats-grid">
+    <div class="stat-box">
+      <div class="stat-label">守护进程 PID</div>
+      <div class="stat-value green" id="statPid">运行中</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">特权 UID</div>
+      <div class="stat-value blue" id="statUid">2000 (shell)</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">充电状态</div>
+      <div class="stat-value amber" id="statCharge">监听中</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">累计跳过广告</div>
+      <div class="stat-value green" id="statAdskipCount">0 次</div>
+    </div>
+  </div>
+  <div style="margin-top: 10px; background: #0c1322; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); font-size: 12px;">
+    <span style="color:var(--text-sub);">当前前台感知：</span>
+    <span id="statActiveApp" style="font-family:monospace; color:#38bdf8;">com.unionpay.hmos.wallet</span>
+  </div>
+</div>
+
+<!-- 2. Modular Feature Switches -->
+<div class="card">
+  <div class="card-title">插件模块开关</div>
+
+  <!-- Module 1: AdSkip -->
+  <div class="switch-row">
+    <div class="switch-info">
+      <div class="switch-title">开屏广告跳过 (AdSkip)</div>
+      <div class="switch-desc">应用打开时自动定位并点击“跳过”（免无障碍）</div>
+    </div>
+    <label class="switch">
+      <input type="checkbox" id="switchAdskip" checked onchange="toggleModule('adskip', this.checked)">
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <!-- Module 2: KeepAwake -->
+  <div class="switch-row">
+    <div class="switch-info">
+      <div class="switch-title">充电时屏幕常亮 (KeepAwake)</div>
+      <div class="switch-desc">检测到接通充电时自动保持常亮，拔电恢复默认息屏</div>
+    </div>
+    <label class="switch">
+      <input type="checkbox" id="switchKeepAwake" checked onchange="toggleModule('keepawake', this.checked)">
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <!-- Module 3: SMS Bridge -->
+  <div class="switch-row">
+    <div class="switch-info">
+      <div class="switch-title">短信转发中继 (SmsForwarder Bridge)</div>
+      <div class="switch-desc">捕获宿主新短信事件写入总线，供容器内应用与 Webhook 调用</div>
+    </div>
+    <label class="switch">
+      <input type="checkbox" id="switchSms" checked onchange="toggleModule('sms', this.checked)">
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <!-- Module 4: Macro & KDE -->
+  <div class="switch-row">
+    <div class="switch-info">
+      <div class="switch-title">MacroDroid & KDE 联动桥</div>
+      <div class="switch-desc">提供硬件触摸注入、息屏唤醒与跨沙盒特权控制接口</div>
+    </div>
+    <label class="switch">
+      <input type="checkbox" id="switchMacro" checked onchange="toggleModule('macro', this.checked)">
+      <span class="slider"></span>
+    </label>
+  </div>
+</div>
+
+<!-- 3. Quick Privileged Actions -->
+<div class="card">
+  <div class="card-title">快捷特权操作</div>
+  <div class="action-grid">
+    <button class="btn-action" onclick="runQuickAction('@PING')">
+      ⚡ <span>测试宿主延迟</span>
+    </button>
+    <button class="btn-action" onclick="runQuickAction('@WAKEUP')">
+      ☀️ <span>唤醒屏幕</span>
+    </button>
+    <button class="btn-action" onclick="runQuickAction('@TAP 630 1400')">
+      🎯 <span>屏幕居中点击</span>
+    </button>
+    <button class="btn-action" onclick="viewLog('sms_latest.json')">
+      ✉️ <span>查看最新短信</span>
+    </button>
+    <button class="btn-action" onclick="viewLog('adskip.log')">
+      📜 <span>查看跳过记录</span>
+    </button>
+    <button class="btn-action" onclick="viewLog('hmpriv.log')">
+      📄 <span>查看框架主日志</span>
+    </button>
+  </div>
+</div>
+
+<!-- 4. Interactive Terminal Console -->
+<div class="card">
+  <div class="card-title">特权指令控制台 (UID 2000)</div>
+  <div class="chips">
+    <span class="chip" onclick="setCmd('id && uname -a')">id && uname</span>
+    <span class="chip" onclick="setCmd('power-shell timeout -r')">恢复息屏时长</span>
+    <span class="chip" onclick="setCmd('bm dump -a')">已安装应用</span>
+    <span class="chip" onclick="setCmd('@STATUS')">@STATUS</span>
+  </div>
+
+  <div class="terminal-box">
+    <div class="cmd-input-group">
+      <input type="text" id="cmdInput" class="cmd-input" placeholder="输入 Shell 指令，如 id 或 @PING..." onkeydown="if(event.key==='Enter') executeCommand()">
+      <button class="cmd-submit" id="btnRun" onclick="executeCommand()">执行</button>
+    </div>
+    <div class="terminal-out" id="termOut">终端就绪。点击上方快捷动作或输入指令执行...</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let dirHandle = null;
+let isPolling = false;
+
+function showToast(msg) {
+  const toast = document.getElementById('toast');
+  toast.innerText = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2000);
+}
+
+async function requestBusDir() {
+  if (!window.showDirectoryPicker) {
+    showToast('当前浏览器不支持目录直接授权，可使用文件编辑方式触发');
+    return;
+  }
+  try {
+    dirHandle = await window.showDirectoryPicker();
+    document.getElementById('connectHint').innerHTML = '✅ <b>已连接 HMArkPriv 总线目录！</b> 实时双向同步已激活';
+    document.getElementById('connectSection').style.borderColor = 'var(--success)';
+    showToast('总线连接成功！');
+    startAutoPolling();
+  } catch (err) {
+    if (err.name !== 'AbortError') showToast('授权失败: ' + err.message);
+  }
+}
+
+async function startAutoPolling() {
+  if (isPolling) return;
+  isPolling = true;
+
+  setInterval(async () => {
+    if (!dirHandle) return;
+    try {
+      const fileHandle = await dirHandle.getFileHandle('status.json');
+      const file = await fileHandle.getFile();
+      const text = await file.text();
+      const data = JSON.parse(text);
+
+      document.getElementById('statPid').innerText = data.pid || '运行中';
+      document.getElementById('statUid').innerText = (data.uid || '2000') + ' (' + (data.user || 'shell') + ')';
+      document.getElementById('statCharge').innerText = data.charging_state || '未知';
+      document.getElementById('statAdskipCount').innerText = (data.adskip_count || 0) + ' 次';
+      document.getElementById('statActiveApp').innerText = data.last_active_app || '(无活跃应用)';
+      document.getElementById('lastUpdate').innerText = '已同步: ' + (data.updated_at ? data.updated_at.split(' ')[1] : '');
+      
+      if (data.module_adskip !== undefined) document.getElementById('switchAdskip').checked = (data.module_adskip == 1);
+      if (data.module_keepawake !== undefined) document.getElementById('switchKeepAwake').checked = (data.module_keepawake == 1);
+      if (data.module_sms !== undefined) document.getElementById('switchSms').checked = (data.module_sms == 1);
+      if (data.module_macro !== undefined) document.getElementById('switchMacro').checked = (data.module_macro == 1);
+    } catch (e) {}
+  }, 1200);
+}
+
+async function dispatchRpc(commandStr) {
+  const reqId = 'req_' + Date.now();
+  const reqContent = reqId + '|' + commandStr + '\n';
+
+  if (dirHandle) {
+    try {
+      const reqH = await dirHandle.getFileHandle('cmd.req', { create: false });
+      const writable = await reqH.createWritable();
+      await writable.write(reqContent);
+      await writable.close();
+
+      let attempts = 0;
+      while (attempts < 30) {
+        await new Promise(r => setTimeout(r, 150));
+        attempts++;
+        try {
+          const resH = await dirHandle.getFileHandle('cmd.res');
+          const file = await resH.getFile();
+          const text = await file.text();
+          const lines = text.split('\n');
+          if (lines[0] && lines[0].startsWith('ID:' + reqId)) {
+            return lines.slice(1).join('\n');
+          }
+        } catch(e) {}
+      }
+      return '[!] 响应超时 (req_id=' + reqId + ')';
+    } catch (e) {
+      return '[!] 写入 cmd.req 失败: ' + e.message;
+    }
+  } else {
+    const fallbackCmd = 'sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh exec "' + commandStr + '"';
+    navigator.clipboard.writeText(fallbackCmd).catch(()=>{});
+    showToast('已复制指令到剪贴板！');
+    return '[提示] 未连接总线，已复制对应执行指令：\n' + fallbackCmd;
+  }
+}
+
+async function toggleModule(modName, checked) {
+  const cmd = '@' + modName.toUpperCase() + '_' + (checked ? 'ON' : 'OFF');
+  showToast(checked ? '正在启用模块...' : '正在停用模块...');
+  await dispatchRpc(cmd);
+}
+
+function setCmd(cmd) { document.getElementById('cmdInput').value = cmd; }
+async function runQuickAction(cmd) { setCmd(cmd); await executeCommand(); }
+
+async function viewLog(logName) {
+  if (dirHandle) {
+    try {
+      const fileH = await dirHandle.getFileHandle(logName);
+      const file = await fileH.getFile();
+      const text = await file.text();
+      document.getElementById('termOut').innerText = text.trim() ? text : '(内容为空)';
+    } catch(e) {
+      document.getElementById('termOut').innerText = '读取 ' + logName + ' 失败: ' + e.message;
+    }
+  } else {
+    setCmd('cat /storage/media/100/local/files/Docs/Download/HMArkPriv/' + logName);
+    await executeCommand();
+  }
+}
+
+async function executeCommand() {
+  const input = document.getElementById('cmdInput');
+  const term = document.getElementById('termOut');
+  const btn = document.getElementById('btnRun');
+  const cmd = input.value.trim();
+  if (!cmd) return;
+
+  btn.disabled = true;
+  term.innerText = '正在执行: ' + cmd + ' ...\n';
+  const output = await dispatchRpc(cmd);
+  term.innerText = output;
+  btn.disabled = false;
+}
+</script>
+</body>
+</html>

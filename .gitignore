@@ -1,0 +1,15 @@
+.DS_Store
+*.swp
+*.bak
+*.tmp
+daemon.pid
+daemon.log
+hmpriv.log
+adskip.log
+keepawake.log
+sms.log
+sms_latest.json
+cmd.req
+cmd.res
+status.json
+focus_layout.json
