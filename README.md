@@ -71,38 +71,35 @@ HMArkPriv/
 
 ---
 
-### 2. 手机端可视化控制（免终端）
+### 2. 手机端可视化控制中心
 1. 打开手机自带的 **「文件管理」** -> **浏览 -> 我的手机 -> `Download` -> `HMArkPriv`**。
-2. 点击 **`HMArkPriv_Console.html`**，用系统浏览器打开。
-3. （推荐）点击浏览器菜单 -> **「添加到主屏幕」**，桌面上即可直接生成独立 App 图标！
-4. 页面提供：
-   - 各模块独立开关（开屏广告跳过、充电常亮、短信中继等）；
-   - 实时状态监控（PID、充电状态、当前前台应用）；
-   - 快捷动作（唤醒屏幕、居中点击、测试延迟）；
-   - 网页特权命令行终端。
+2. 点击 **`HMArkPriv_Console.html`** 用自带浏览器打开。
+3. 点击顶部的 **「🔗 连接总线」** 按钮，选择当前的 `Download/HMArkPriv` 文件夹授权。
+4. （推荐）点击浏览器菜单 -> **「添加到主屏幕」**，桌面上即可直接生成独立 App 图标！
+5. 在控制中心内可以自由勾选：
+   - **开屏广告跳过 (AdSkip)**：自动识别纯血应用开屏广告并毫秒级跳过；
+   - **充电屏幕常亮 (KeepAwake)**：硬件供电接入时保持 24h 屏幕常亮，拔出后自动恢复系统默认息屏；
+   - **后台保活守卫 (KeepAlive Guardian)**：保护卓易通容器、KDE Connect、短信转发器在锁屏与休眠时不掉线、不被挂起；
+   - **短信转发中继 (SmsForwarder Bridge)**：捕获系统短信事件并中继推送；
+   - **快捷动作**：极速切换热点、唤醒屏幕、特权指令控制台。
 
 ---
 
-### 3. 在卓易通（MacroDroid / MT 管理器 / KDE Connect）中调用特权
+### 3. HMArkPriv 如何辅助后台软件（KDE Connect / 短信转发器 / MacroDroid）
 
-#### 方式 A：MacroDroid 自动化（推荐，免终端）
-- 在 MacroDroid 添加动作 -> **文件 -> 写入文本到文件 (Write to File)**；
-- 目标路径选择 `/sdcard/MyHarmonyOSDevice/Download/HMArkPriv/cmd.req`（勾选“覆盖现有内容”）；
-- 写入文本内容：`{timems}|@TAP 630 1400` 或 `{timems}|power-shell wakeup`；
-- 触发动作时，HMArkPriv 守护进程将在 0.25 秒内自动在鸿蒙宿主层完成特权操作。
+HMArkPriv 运行在鸿蒙 7.0 宿主系统的 **UID 2000 (Shell)** 特权层，作为底层的**常驻守护神**为沙盒容器内的软件提供深度辅助：
 
-#### 方式 B：MT 管理器 / 脚本直接调用
-```sh
-# 查看框架状态与模块开关
-sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh status
+1. **为 KDE Connect 提供网络唤醒与防休眠保障**：
+   - 鸿蒙系统在锁屏后几分钟通常会冻结后台 Socket 连接，导致 KDE Connect 与电脑断连。
+   - HMArkPriv 的 `KeepAlive` 模块定期进行微内核活跃度脉冲与 Socket 刷新，让 KDE Connect 在息屏状态下也能持续稳定接收通知和传输文件。
 
-# 在鸿蒙宿主执行任意特权指令
-sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh exec "id && uname -a"
+2. **为短信转发器 (SmsForwarder) 提供通知中继**：
+   - 卓易通沙盒内的应用因权限隔离，无法直接读取纯血鸿蒙系统的短信广播与状态栏通知。
+   - HMArkPriv 监听宿主系统的来电与短信事件，并将事件实时写入共享总线 `sms_latest.json`，同时支持直接配置 Webhook 外部推送。
 
-# 动态开关指定模块
-sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh adskip on
-sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh keepawake on
-```
+3. **为 MacroDroid 提供底层原生特权动作**：
+   - 在鸿蒙 7.0 上，Android 宏无法直接开关热点或调用原生无障碍。
+   - MacroDroid 可以通过调用 HMArkPriv，在无需 Root 和 Android Shizuku 的情况下，间接获得鸿蒙原生热点切换、息屏唤醒等系统级执行力。
 
 ---
 

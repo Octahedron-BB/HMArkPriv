@@ -31,12 +31,14 @@ echo $$ > "${PID_FILE}"
 # Load Extensible Modules
 . "${PROJECT_DIR}/modules/adskip.sh"
 . "${PROJECT_DIR}/modules/keep_awake.sh"
+. "${PROJECT_DIR}/modules/keep_alive.sh"
 . "${PROJECT_DIR}/modules/sms_forwarder.sh"
 . "${PROJECT_DIR}/modules/macro_kde_bridge.sh"
 
 # State & Config Defaults
 MODULE_ADSKIP=1
 MODULE_KEEPAWAKE=1
+MODULE_KEEPALIVE=1
 MODULE_SMS=1
 MODULE_MACRO=1
 RPC_COUNT=0
@@ -152,6 +154,7 @@ while true; do
 
     if [ $((LOOP_TICK % 4)) -eq 0 ]; then
         mod_keepawake_poll
+        mod_keepalive_poll
     fi
 
     if [ $((LOOP_TICK % 8)) -eq 0 ]; then

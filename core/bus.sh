@@ -75,6 +75,7 @@ bus_update_status() {
   "system_uptime_sec": "${UPTIME_SEC}",
   "module_adskip": ${MODULE_ADSKIP:-1},
   "module_keepawake": ${MODULE_KEEPAWAKE:-1},
+  "module_keepalive": ${MODULE_KEEPALIVE:-1},
   "module_sms": ${MODULE_SMS:-1},
   "module_macro": ${MODULE_MACRO:-1},
   "adskip_count": ${ADSKIP_COUNT:-0},

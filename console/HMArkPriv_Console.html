@@ -384,7 +384,19 @@
     </label>
   </div>
 
-  <!-- Module 4: Macro & KDE -->
+  <!-- Module 4: KeepAlive Guardian -->
+  <div class="switch-row">
+    <div class="switch-info">
+      <div class="switch-title">后台保活守卫 (KeepAlive Guardian)</div>
+      <div class="switch-desc">防微内核休眠冻结，保持卓易通容器、KDE Connect 与短信转发常驻</div>
+    </div>
+    <label class="switch">
+      <input type="checkbox" id="switchKeepAlive" checked onchange="toggleModule('keepalive', this.checked)">
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <!-- Module 5: Macro & KDE -->
   <div class="switch-row">
     <div class="switch-info">
       <div class="switch-title">MacroDroid & KDE 联动桥</div>
@@ -418,6 +430,9 @@
     </button>
     <button class="btn-action" onclick="viewLog('adskip.log')">
       📜 <span>查看跳过记录</span>
+    </button>
+    <button class="btn-action" onclick="viewLog('keepalive.log')">
+      🛡️ <span>查看保活日志</span>
     </button>
     <button class="btn-action" onclick="viewLog('hmpriv.log')">
       📄 <span>查看框架主日志</span>
@@ -510,6 +525,7 @@ async function startAutoPolling() {
       
       if (data.module_adskip !== undefined) document.getElementById('switchAdskip').checked = (data.module_adskip == 1);
       if (data.module_keepawake !== undefined) document.getElementById('switchKeepAwake').checked = (data.module_keepawake == 1);
+      if (data.module_keepalive !== undefined) document.getElementById('switchKeepAlive').checked = (data.module_keepalive == 1);
       if (data.module_sms !== undefined) document.getElementById('switchSms').checked = (data.module_sms == 1);
       if (data.module_macro !== undefined) document.getElementById('switchMacro').checked = (data.module_macro == 1);
     } catch (e) {}
