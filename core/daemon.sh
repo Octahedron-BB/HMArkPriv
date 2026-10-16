@@ -53,6 +53,9 @@ load_config() {
         V_KA=$(grep -E '^MODULE_KEEPAWAKE=' "${CFG_FILE}" 2>/dev/null | tail -n 1 | cut -d'=' -f2 | sed 's/[^0-9]//g')
         [ -n "${V_KA}" ] && MODULE_KEEPAWAKE="${V_KA}"
 
+        V_KL=$(grep -E '^MODULE_KEEPALIVE=' "${CFG_FILE}" 2>/dev/null | tail -n 1 | cut -d'=' -f2 | sed 's/[^0-9]//g')
+        [ -n "${V_KL}" ] && MODULE_KEEPALIVE="${V_KL}"
+
         V_SMS=$(grep -E '^MODULE_SMS=' "${CFG_FILE}" 2>/dev/null | tail -n 1 | cut -d'=' -f2 | sed 's/[^0-9]//g')
         [ -n "${V_SMS}" ] && MODULE_SMS="${V_SMS}"
 
@@ -70,6 +73,7 @@ save_config() {
 # HMArkPriv Runtime Configuration
 MODULE_ADSKIP=${MODULE_ADSKIP:-1}
 MODULE_KEEPAWAKE=${MODULE_KEEPAWAKE:-1}
+MODULE_KEEPALIVE=${MODULE_KEEPALIVE:-1}
 MODULE_SMS=${MODULE_SMS:-1}
 MODULE_MACRO=${MODULE_MACRO:-1}
 SMS_WEBHOOK_URL=${SMS_WEBHOOK_URL:-}
@@ -82,11 +86,12 @@ bus_init
 load_config
 mod_adskip_init
 mod_keepawake_init
+mod_keepalive_init
 mod_sms_init
 
 bus_log "=========================================================="
 bus_log "HMArkPriv Framework Daemon started (PID=$$, UID=$(id -u))"
-bus_log "Active Modules: AdSkip=${MODULE_ADSKIP} KeepAwake=${MODULE_KEEPAWAKE} SMS=${MODULE_SMS} Macro=${MODULE_MACRO}"
+bus_log "Active Modules: AdSkip=${MODULE_ADSKIP} KeepAwake=${MODULE_KEEPAWAKE} KeepAlive=${MODULE_KEEPALIVE} SMS=${MODULE_SMS} Macro=${MODULE_MACRO}"
 bus_log "=========================================================="
 bus_update_status
 
@@ -126,14 +131,29 @@ while true; do
                 OUT="OK: Module [KeepAwake] DISABLED."
                 RC=0
                 ;;
+            "@KEEPALIVE_ON")
+                MODULE_KEEPALIVE=1
+                save_config
+                OUT="OK: Module [KeepAlive] ENABLED."
+                RC=0
+                ;;
+            "@KEEPALIVE_OFF")
+                MODULE_KEEPALIVE=0
+                save_config
+                OUT="OK: Module [KeepAlive] DISABLED."
+                RC=0
+                ;;
             "@STATUS")
                 bus_update_status
                 OUT=$(cat "${STATUS_FILE}" 2>/dev/null)
                 RC=0
                 ;;
             *)
-                # Try Macro/KDE module handler first
-                if mod_macro_handle "${BUS_REQ_CMD}"; then
+                # Try KeepAlive handler
+                if mod_keepalive_handle "${BUS_REQ_CMD}"; then
+                    :
+                # Try Macro/KDE module handler
+                elif mod_macro_handle "${BUS_REQ_CMD}"; then
                     :
                 else
                     # Fallback to direct shell execution

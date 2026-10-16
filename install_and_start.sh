@@ -57,6 +57,13 @@ printf '{"framework":"HMArkPriv","status":"starting"}\n' > "$STAGE_DIR/status.js
 printf "=== HMArkPriv Framework Log Initialized ===\n" > "$STAGE_DIR/hmpriv.log"
 printf "=== HMArkPriv AdSkip Log Initialized ===\n" > "$STAGE_DIR/adskip.log"
 printf "=== HMArkPriv KeepAwake Log Initialized ===\n" > "$STAGE_DIR/keepawake.log"
+printf "=== HMArkPriv KeepAlive Log Initialized ===\n" > "$STAGE_DIR/keepalive.log"
+cat << 'EOF' > "$STAGE_DIR/keepalive_apps.txt"
+com.droi.tong
+org.kde.kdeconnect_tp
+cn.ppps.forwarder
+com.arlosoft.macrodroid
+EOF
 printf "=== HMArkPriv SMS Log Initialized ===\n" > "$STAGE_DIR/sms.log"
 printf '{"status":"idle","last_event":null}\n' > "$STAGE_DIR/sms_latest.json"
 
@@ -68,7 +75,7 @@ echo "[2/4] Pre-allocating Cross-Sandbox Shared Bus in $REMOTE_BUS ..."
 mkdir -p "$STAGE_DIR/HMArkPriv"
 "$HDC" -t "$TARGET" file send "$STAGE_DIR/HMArkPriv" "/storage/media/100/local/files/Docs/Download/" >/dev/null 2>&1 || true
 
-for f in cmd.req cmd.res config.conf status.json hmpriv.log adskip.log keepawake.log sms.log sms_latest.json; do
+for f in cmd.req cmd.res config.conf status.json hmpriv.log adskip.log keepawake.log keepalive.log keepalive_apps.txt sms.log sms_latest.json; do
     "$HDC" -t "$TARGET" file send "$STAGE_DIR/$f" "$REMOTE_BUS/$f" >/dev/null
 done
 
@@ -81,6 +88,7 @@ echo "[3/4] Deploying HMArkPriv Microkernel & Modules to $REMOTE_TMP ..."
 "$HDC" -t "$TARGET" file send "$SCRIPT_DIR/core/daemon.sh" "$REMOTE_TMP/core/daemon.sh" >/dev/null
 "$HDC" -t "$TARGET" file send "$SCRIPT_DIR/modules/adskip.sh" "$REMOTE_TMP/modules/adskip.sh" >/dev/null
 "$HDC" -t "$TARGET" file send "$SCRIPT_DIR/modules/keep_awake.sh" "$REMOTE_TMP/modules/keep_awake.sh" >/dev/null
+"$HDC" -t "$TARGET" file send "$SCRIPT_DIR/modules/keep_alive.sh" "$REMOTE_TMP/modules/keep_alive.sh" >/dev/null
 "$HDC" -t "$TARGET" file send "$SCRIPT_DIR/modules/sms_forwarder.sh" "$REMOTE_TMP/modules/sms_forwarder.sh" >/dev/null
 "$HDC" -t "$TARGET" file send "$SCRIPT_DIR/modules/macro_kde_bridge.sh" "$REMOTE_TMP/modules/macro_kde_bridge.sh" >/dev/null
 "$HDC" -t "$TARGET" file send "$SCRIPT_DIR/client/hmpriv_cli.sh" "$REMOTE_TMP/client/hmpriv_cli.sh" >/dev/null

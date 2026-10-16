@@ -194,6 +194,9 @@
   }
   input:checked + .slider { background-color: var(--success); }
   input:checked + .slider:before { transform: translateX(22px); }
+  .switch.small { width: 44px; height: 24px; }
+  .switch.small .slider:before { height: 18px; width: 18px; left: 3px; bottom: 3px; }
+  .switch.small input:checked + .slider:before { transform: translateX(20px); }
   .action-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
@@ -409,6 +412,35 @@
   </div>
 </div>
 
+<!-- 2.5 Granular Keep-Alive Whitelist -->
+<div class="card">
+  <div class="card-title">
+    <span>🛡️ 后台保活常驻白名单</span>
+    <span style="font-size:11px; color:var(--text-sub);" id="keepaliveStatus">自定义勾选</span>
+  </div>
+  <p style="font-size:12px; color:var(--text-sub); margin:0 0 12px 0;">
+    勾选需要常驻后台的应用。HMArkPriv 会在宿主微内核深度休眠期间主动向沙盒与应用注入活跃心跳，防止锁屏冻结或断连。
+  </p>
+  
+  <div id="keepaliveList" style="display:flex; flex-direction:column; gap:8px; margin-bottom:12px;">
+    <!-- Rendered dynamically -->
+  </div>
+
+  <div style="display:flex; gap:8px; margin-bottom:12px;">
+    <input type="text" id="newAppInput" placeholder="输入应用包名，如 bin.mt.plus.canary" style="flex:1; background:#0c1322; border:1px solid var(--border); color:#38bdf8; padding:8px 12px; border-radius:10px; font-size:12px; font-family:monospace; outline:none;">
+    <button class="btn-connect" style="padding:6px 14px; font-size:12px;" onclick="addCustomKeepAliveApp()">+ 添加</button>
+  </div>
+
+  <div style="display:flex; gap:8px;">
+    <button class="btn-action" style="flex:1; justify-content:center;" onclick="saveKeepAliveApps()">
+      💾 <span>保存白名单</span>
+    </button>
+    <button class="btn-action" style="flex:1; justify-content:center;" onclick="runQuickAction('@KEEPALIVE_PULSE')">
+      ⚡ <span>立即触发一次心跳</span>
+    </button>
+  </div>
+</div>
+
 <!-- 3. Quick Privileged Actions -->
 <div class="card">
   <div class="card-title">快捷特权操作</div>
@@ -528,6 +560,7 @@ async function startAutoPolling() {
       if (data.module_keepalive !== undefined) document.getElementById('switchKeepAlive').checked = (data.module_keepalive == 1);
       if (data.module_sms !== undefined) document.getElementById('switchSms').checked = (data.module_sms == 1);
       if (data.module_macro !== undefined) document.getElementById('switchMacro').checked = (data.module_macro == 1);
+      syncKeepAliveFromBus();
     } catch (e) {}
   }, 1200);
 }
@@ -607,6 +640,107 @@ async function executeCommand() {
   term.innerText = output;
   btn.disabled = false;
 }
+
+// --- Granular KeepAlive Whitelist Controller ---
+const defaultApps = [
+  { pkg: 'com.droi.tong', name: '卓易通核心容器 (ANCO 基础运行环境)', desc: '守护 Android 核心沙盒与底层 IPC Broker' },
+  { pkg: 'org.kde.kdeconnect_tp', name: 'KDE Connect 跨设备互联', desc: '守护局域网通信套接字，防止锁屏断开连接' },
+  { pkg: 'cn.ppps.forwarder', name: '短信转发器 (SmsForwarder)', desc: '守护后台通知监听与 Webhook 请求通道' },
+  { pkg: 'com.arlosoft.macrodroid', name: 'MacroDroid 宏自动化', desc: '守护后台定时器与自动化宏触发流程' },
+  { pkg: 'bin.mt.plus.canary', name: 'MT 管理器', desc: '文件管理与常驻后台任务' }
+];
+
+let currentWhitelist = new Set(['com.droi.tong', 'org.kde.kdeconnect_tp', 'cn.ppps.forwarder', 'com.arlosoft.macrodroid']);
+let customAppsList = [];
+let hasSyncedKeepAlive = false;
+
+function renderKeepAliveList() {
+  const container = document.getElementById('keepaliveList');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const allApps = [...defaultApps];
+  customAppsList.forEach(pkg => {
+    if (!allApps.some(a => a.pkg === pkg)) {
+      allApps.push({ pkg: pkg, name: pkg, desc: '用户自定义保活应用' });
+    }
+  });
+
+  allApps.forEach(item => {
+    const isChecked = currentWhitelist.has(item.pkg);
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; background:#0c1322; border:1px solid var(--border); border-radius:10px; padding:10px 12px;';
+    
+    row.innerHTML = `
+      <div style="flex:1; margin-right:10px;">
+        <div style="font-size:13px; font-weight:600; color:${isChecked ? '#f8fafc' : '#94a3b8'};">${item.name}</div>
+        <div style="font-size:11px; color:#64748b; font-family:monospace; margin-top:2px;">${item.pkg}</div>
+        <div style="font-size:11px; color:var(--text-sub); margin-top:1px;">${item.desc}</div>
+      </div>
+      <label class="switch small">
+        <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleKeepAliveApp('${item.pkg}', this.checked)">
+        <span class="slider"></span>
+      </label>
+    `;
+    container.appendChild(row);
+  });
+}
+
+function toggleKeepAliveApp(pkg, enabled) {
+  if (enabled) {
+    currentWhitelist.add(pkg);
+  } else {
+    currentWhitelist.delete(pkg);
+  }
+  renderKeepAliveList();
+}
+
+function addCustomKeepAliveApp() {
+  const input = document.getElementById('newAppInput');
+  const pkg = input.value.trim();
+  if (!pkg) return;
+  if (!customAppsList.includes(pkg)) {
+    customAppsList.push(pkg);
+  }
+  currentWhitelist.add(pkg);
+  input.value = '';
+  renderKeepAliveList();
+  showToast('已添加 ' + pkg + '，请点击保存！');
+}
+
+async function saveKeepAliveApps() {
+  const appsArr = Array.from(currentWhitelist);
+  const appsStr = appsArr.join(',');
+  showToast('正在保存白名单...');
+  const res = await dispatchRpc('@KEEPALIVE_SET ' + appsStr);
+  showToast('保活白名单已保存生效！');
+  document.getElementById('termOut').innerText = res;
+}
+
+async function syncKeepAliveFromBus() {
+  if (hasSyncedKeepAlive) return;
+  if (dirHandle) {
+    try {
+      const fileH = await dirHandle.getFileHandle('keepalive_apps.txt');
+      const file = await fileH.getFile();
+      const text = await file.text();
+      const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+      if (lines.length > 0) {
+        currentWhitelist = new Set(lines);
+        lines.forEach(l => {
+          if (!defaultApps.some(a => a.pkg === l) && !customAppsList.includes(l)) {
+            customAppsList.push(l);
+          }
+        });
+        hasSyncedKeepAlive = true;
+        renderKeepAliveList();
+      }
+    } catch(e) {}
+  }
+}
+
+// Initial render
+renderKeepAliveList();
 </script>
 </body>
 </html>
