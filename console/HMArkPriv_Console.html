@@ -528,8 +528,8 @@ async function dispatchRpc(commandStr) {
       await writable.close();
 
       let attempts = 0;
-      while (attempts < 30) {
-        await new Promise(r => setTimeout(r, 150));
+      while (attempts < 40) {
+        await new Promise(r => setTimeout(r, 200));
         attempts++;
         try {
           const resH = await dirHandle.getFileHandle('cmd.res');
@@ -541,7 +541,7 @@ async function dispatchRpc(commandStr) {
           }
         } catch(e) {}
       }
-      return '[!] 响应超时 (req_id=' + reqId + ')';
+      return '[!] 响应超时 (req_id=' + reqId + ')，请确认守护进程是否正在运行，或尝试在终端中重新启动。';
     } catch (e) {
       return '[!] 写入 cmd.req 失败: ' + e.message;
     }

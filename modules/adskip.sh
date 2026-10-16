@@ -52,13 +52,15 @@ mod_adskip_poll() {
     [ ! -f "${LAYOUT_FILE}" ] && return 0
 
     # Extract skip button node ("跳过", "跳过广告", "3s 跳过", etc.)
-    MATCH_NODE=$(grep -o '"bounds":"\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"[^}]*"text":"[^"]*跳过[^"]*"' "${LAYOUT_FILE}" 2>/dev/null | head -n 1)
+    # Exclude false positives from HMArkPriv console ("累计跳过广告", "开屏广告跳过")
+    MATCH_NODE=$(grep -o '"bounds":"\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"[^}]*"text":"[^"]*跳过[^"]*"' "${LAYOUT_FILE}" 2>/dev/null | grep -v '累计' | grep -v '开屏' | head -n 1)
 
     if [ -n "${MATCH_NODE}" ]; then
         BTN_TEXT=$(echo "${MATCH_NODE}" | sed -n 's/.*"text":"\([^"]*\)".*/\1/p')
         TEXT_LEN=${#BTN_TEXT}
 
-        if [ "${TEXT_LEN}" -le 18 ]; then
+        # Real splash skip buttons are short, like "跳过", "跳过 5s", "5s 跳过", "跳过广告"
+        if [ "${TEXT_LEN}" -le 8 ] && [ "${TEXT_LEN}" -ge 2 ]; then
             BOUNDS=$(echo "${MATCH_NODE}" | sed -n 's/.*"bounds":"\([^"]*\)".*/\1/p')
             X1=$(echo "${BOUNDS}" | sed 's/\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]/\1/')
             Y1=$(echo "${BOUNDS}" | sed 's/\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]/\2/')
