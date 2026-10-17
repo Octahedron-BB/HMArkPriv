@@ -66,9 +66,26 @@ cd HMArkPriv
 
 ---
 
-### 3. 使用方式二：在卓易通 (MacroDroid / MT 管理器) 中调用
+### 3. 使用方式二：交互式特权终端机 (`hmshell`) —— 强烈推荐！
 
-在卓易通安卓容器内（如 MacroDroid 的“Shell 脚本”动作或 MT 管理器终端），直接调用：
+利用手机现有的 **MT 管理器**（或 Termux）内置终端，直接进入交互式特权 Shell，享受**极速响应、无浏览器卡顿、完整彩色输出**的原生终端机体验：
+
+1. 打开 **MT 管理器** ➔ 左上角侧边栏 ➔ 点击 **【终端】**；
+2. 输入以下命令并回车：
+   ```bash
+   sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmshell
+   ```
+3. 立即进入 **`[HMArkPriv:shell]# `** 特权终端提示符！
+   * 支持任意鸿蒙 Shell 指令即输即出（延迟 < 50ms）；
+   * 支持快捷别名：输入 `wakeup`（唤醒屏幕）、`battery`（查看电池电量）、`hotspot`（开关热点）、`apps`（已装应用）、`notification`（打开通知使用权）、`help`（查看指南）；
+   * 支持查看完整的 stderr 报错与 exit code，不丢失任何日志；
+   * 可在 MT 管理器中点击右上角“创建快捷方式”直接添加到手机桌面，一键秒开！
+
+---
+
+### 4. 使用方式三：在卓易通自动化工具中单行调用 (MacroDroid / 脚本)
+
+在卓易通安卓容器内（如 MacroDroid 的“Shell 脚本”动作），直接调用：
 
 ```bash
 sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh <你要执行的指令>
