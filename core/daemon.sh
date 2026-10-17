@@ -57,6 +57,6 @@ while true; do
         fi
     fi
 
-    # Low-power sleep
-    sleep 0.2
+    # Low-power sleep (snappy 50ms interval)
+    sleep 0.05
 done

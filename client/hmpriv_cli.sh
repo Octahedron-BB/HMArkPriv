@@ -53,7 +53,7 @@ send_cmd() {
                     ;;
             esac
         fi
-        sleep 0.1 2>/dev/null || sleep 1
+        sleep 0.05 2>/dev/null || sleep 1
         waited=$((waited + 1))
     done
 

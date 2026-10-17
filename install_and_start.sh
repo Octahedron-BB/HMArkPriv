@@ -57,13 +57,16 @@ for f in cmd.req cmd.res status.json; do
     "$HDC" -t "$TARGET" file send "$STAGE_DIR/$f" "$REMOTE_BUS/$f" >/dev/null
 done
 
-# Send CLI and Web Shell Console to Download/HMArkPriv for direct access
+# Send CLI, Interactive Terminal, and Web Shell Console to Download/HMArkPriv for direct access
 "$HDC" -t "$TARGET" file send "$SCRIPT_DIR/client/hmpriv_cli.sh" "$REMOTE_BUS/hmpriv_cli.sh" >/dev/null
+"$HDC" -t "$TARGET" file send "$SCRIPT_DIR/client/hmshell" "$REMOTE_BUS/hmshell" >/dev/null
 "$HDC" -t "$TARGET" file send "$SCRIPT_DIR/console/HMArkPriv_Console.html" "$REMOTE_BUS/HMArkPriv_Console.html" >/dev/null
 
 echo "[3/4] Deploying HMArkPriv Shell Server & CLI to $REMOTE_TMP ..."
 "$HDC" -t "$TARGET" file send "$SCRIPT_DIR/core/daemon.sh" "$REMOTE_TMP/core/daemon.sh" >/dev/null
 "$HDC" -t "$TARGET" file send "$SCRIPT_DIR/client/hmpriv_cli.sh" "$REMOTE_TMP/client/hmpriv_cli.sh" >/dev/null
+"$HDC" -t "$TARGET" file send "$SCRIPT_DIR/client/hmshell" "$REMOTE_TMP/client/hmshell" >/dev/null
+"$HDC" -t "$TARGET" shell "chmod +x $REMOTE_TMP/client/* $REMOTE_BUS/hmshell $REMOTE_BUS/hmpriv_cli.sh 2>/dev/null || true"
 
 echo "[4/4] Starting HMArkPriv Shell Server (UID 2000 shell)..."
 "$HDC" -t "$TARGET" shell "sh -c 'nohup sh $REMOTE_TMP/core/daemon.sh >/dev/null 2>&1 & sleep 1'"
