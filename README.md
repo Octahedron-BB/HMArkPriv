@@ -108,7 +108,9 @@ id      # uid=2000(shell) gid=2000(shell) groups=...,1006(file_manager)...
 |------|------|
 | [`arkui-app/README.md`](arkui-app/README.md) | ArkUI App 完整说明：架构、编译、模拟器调试、踩坑记录 |
 | [`arkui-app/docs/HMArkPriv-App-技术方案.md`](arkui-app/docs/HMArkPriv-App-技术方案.md) | App 技术设计（IPC、页面、6 阶段开发路径） |
+| [`docs/跨应用调用协议.md`](docs/跨应用调用协议.md) | **跨应用调用**：让其他 App 调用特权 shell（方案 A / C+，含 SDK 与示例） |
 | [`docs/Shell指令验证报告.md`](docs/Shell指令验证报告.md) | **Shell 指令实测报告**：逐条 RC + 输出，含输出捕获能力三分类 |
+| [`docs/真机vs模拟器差异报告.md`](docs/真机vs模拟器差异报告.md) | 真机 60 条指令实测 + 两个会卡死 daemon 的命令 |
 | [`docs/HarmonyOS-Shell-指令全集.md`](docs/HarmonyOS-Shell-指令全集.md) | Shell 指令手册（`[官方]`/`[社区]`/`[实机]`/`[未验证]` 四级来源标注） |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 鸿蒙 7.0 安全机制逆向分析 |
 | [`docs/DEVLOG.md`](docs/DEVLOG.md) | 5 阶段研发日志（真机 Pura 70 Pro+） |
@@ -134,6 +136,8 @@ HMArkPriv/
 │   ├── entry/                  # 主模块（ArkTS 源码）
 │   ├── AppScope/
 │   ├── build.sh                # 命令行构建脚本
+│   ├── sdk/
+│   │   └── HmprivClient.ets    # 跨应用调用 SDK（给别人拷走用）
 │   └── README.md               # App 详细说明
 ├── docs/                       # 文档
 └── LICENSE

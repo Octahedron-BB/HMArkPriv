@@ -80,20 +80,49 @@ O=$(aa dump -l 2>&1); echo ${#O}
 **结论**：与模拟器一致。`aa dump` 系列输出走 pty/console，绕过 stdout，
 daemon 的 `$()` 无法捕获。**已用 `uitest dumpLayout` 替代（已实现）。**
 
-### 2.4 卓易通（ANCO）—— ❌ 真机同样没有
+### 2.4 卓易通（ANCO）—— ✅ 已装且部分命令可用
 
-```bash
-bm dump -a | grep -ci android  → 0
-bm dump -a | grep -ci anco     → 0
-bm dump -a | grep -iE 'anco|yitong|container|vmos|virtual'  → 无匹配
+> **重要更正**：早期判断"设备没装卓易通"是**错的**。
+> 原因是我的检测命令用 `grep -i android` / `grep -i anco`，
+> 而容器宿主的 bundleName 是 `com.droi.tong` / `com.easy.hmos.abroad`，
+> 里面根本没有 "android"/"anco" 字样，导致漏判。
+
+设备上实际装有：
+
+```
+com.droi.tong          ← 卓易通（ANCO 容器宿主）
+com.easy.hmos.abroad   ← 出境易
 ```
 
-进一步核查了所有第三方包（排除 huawei/ohos 前缀），全部是正常鸿蒙原生应用
-（canva、大麦、丁香园、WPS、支付宝、高德、各大银行等），
-其中 `com.droi.tong` 经 `bm dump -n` 确认是普通 `app_gallery` 应用，不是容器。
+**容器架构**：卓易通/出境易运行在 `rgm_hmos` / `isulad` 管理的轻量级容器中
+（ANCO 架构），有独立网络命名空间与进程树。
+鸿蒙宿主的 `aa start -b com.android.settings` 能把启动请求路由到容器内的安卓 Settings。
 
-**结论**：这台真机没装卓易通。相关穿透命令（`aa start -b com.android.settings ...`）
-无法验证，需要用户安装卓易通后单独测试。
+**4 条穿透命令实测（仅 1 条可用）**：
+
+| Activity | 结果 | 说明 |
+|----------|------|------|
+| `NotificationAccessSettingsActivity` | ✅ **可用** | 界面确实跳到容器内「通知使用权」页，列出容器内的安卓应用（短信转发器/万步健康/雹/自动冻结/KDE Connect/MacroDroid/HMArkPriv），可重复打开 |
+| `AccessibilitySettingsActivity` | ❌ | aa 返回 RC=0（静默），但界面退回桌面 |
+| `SpecialAccessSettingsActivity` | ❌ | 同上 |
+| `ManageApplicationsActivity` | ❌ | 同上 |
+
+**关键：`$` 转义（不转义必定失败）**
+
+Activity 名是内部类，含 `$`。必须写成：
+
+```bash
+aa start -b com.android.settings -a "com.android.settings.Settings\$NotificationAccessSettingsActivity"
+```
+
+- 外层**双引号**保护整个 activity 名，防止拆词
+- **`\$`** 防止 daemon 的 `sh -c` 把 `$NotificationAccessSettingsActivity` 展开成空
+
+实测不转义时 sh 会把它展开成 `com.android.settings.Settings`，
+启动"成功"（RC=0）但界面退回桌面 —— 这个静默失败很容易误判。
+
+**验证方式**：启动后 `uitest dumpLayout` 看 bundleName 是否为 `com.android.settings`，
+以及界面里是否出现容器内的安卓应用名。
 
 ---
 

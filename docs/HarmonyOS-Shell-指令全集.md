@@ -826,27 +826,45 @@ hdc tconn 127.0.0.1:5556
 
 ### 11.1 调起卓易通内隐藏的安卓系统设置
 
-> **[未验证]** 以下命令来自 HMArkPriv 原始文档。`aa start -b com.android.settings` 的原理是通过鸿蒙宿主的 `aa` 工具启动卓易通容器内的安卓 Settings 应用的特定 Activity。**已知存在部分问题**，具体表现如下：
+> **[实机验证 2026-11-04]** 在 Pura 70 Pro+ (HBN-AL80 / 7.0.0.109) + 卓易通环境上逐条实测。
 >
-> - `$` 转义问题：在 shell 中 `$` 需要正确转义（`\\\$` 或 `\$`），不同执行环境（交互式 shell、脚本、hdc 命令行）的转义层次不同，容易出错
-> - Activity 名称可能因卓易通版本不同而有差异
-> - 部分命令可能无法成功调起目标页面，或调起后立即闪退
-> - 这些命令的本质是通过鸿蒙 `aa start` 的 `-b`（bundleName）和 `-a`（abilityName）参数来启动卓易通容器内的组件，但 `com.android.settings` 并非鸿蒙原生包名，能否被 `aa` 正确路由到卓易通容器内取决于系统配置
+> **架构原理**：卓易通 `com.droi.tong` / 出境易 `com.easy.hmos.abroad` 运行在
+> `rgm_hmos` / `isulad` 管理的轻量级容器（ANCO 架构）中，有独立网络命名空间与进程树。
+> 鸿蒙宿主的 `aa start -b com.android.settings` 能把启动请求路由到容器内的安卓 Settings。
 >
-> **建议**：使用前请务必在目标设备上逐一测试，不要假设所有命令都能正常工作。
+> **验证结果（4 条中仅 1 条可用）**：
+>
+> | Activity | 结果 | 说明 |
+> |----------|------|------|
+> | `NotificationAccessSettingsActivity` | ✅ **可用** | 界面确实跳到容器内「通知使用权」页，列出容器内应用（短信转发器/万步健康/KDE Connect/MacroDroid 等），可重复打开 |
+> | `AccessibilitySettingsActivity` | ❌ 不可用 | aa 返回 RC=0（静默），但界面退回桌面 —— Activity 在卓易通 Settings 里不存在 |
+> | `SpecialAccessSettingsActivity` | ❌ 不可用 | 同上 |
+> | `ManageApplicationsActivity` | ❌ 不可用 | 同上 |
+>
+> **关键：`$` 转义（不转义必定失败）**
+>
+> Activity 名是内部类（含 `$`），必须写成 `"....Settings\$XxxActivity"`：
+> - 外层**双引号**包住整个 activity 名，防止被拆词
+> - **`\$`** 防止 daemon 的 `sh -c` 把 `$NotificationAccessSettingsActivity` 当变量展开成空
+>
+> 实测：不转义时 sh 会把它展开成 `com.android.settings.Settings`，
+> 启动"成功"（RC=0）但界面退回桌面。
+>
+> **能力检测**：判断设备是否装了卓易通要看 `com.droi.tong` 是否在应用列表，
+> **不能**用 `grep -i android` 或 `grep -i anco` —— 容器包的 bundleName 里没有这两个词。
 
 ```bash
-# ⚠️ [未验证] 通知使用权
-aa start -b com.android.settings -a com.android.settings.Settings\$NotificationAccessSettingsActivity
+# ✅ [实机] 通知使用权（唯一可用的一个，注意双引号 + \$ 转义）
+aa start -b com.android.settings -a "com.android.settings.Settings\$NotificationAccessSettingsActivity"
 
-# ⚠️ [未验证] 无障碍设置
-aa start -b com.android.settings -a com.android.settings.Settings\$AccessibilitySettingsActivity
+# ❌ [实机] 无障碍设置（Activity 不存在）
+aa start -b com.android.settings -a "com.android.settings.Settings\$AccessibilitySettingsActivity"
 
-# ⚠️ [未验证] 特殊应用权限
-aa start -b com.android.settings -a com.android.settings.Settings\$SpecialAccessSettingsActivity
+# ❌ [实机] 特殊应用权限（Activity 不存在）
+aa start -b com.android.settings -a "com.android.settings.Settings\$SpecialAccessSettingsActivity"
 
-# ⚠️ [未验证] 应用列表与权限详情
-aa start -b com.android.settings -a com.android.settings.Settings\$ManageApplicationsActivity
+# ❌ [实机] 应用列表与权限详情（Activity 不存在）
+aa start -b com.android.settings -a "com.android.settings.Settings\$ManageApplicationsActivity"
 ```
 
 ### 11.2 穿透启动卓易通内的安卓应用

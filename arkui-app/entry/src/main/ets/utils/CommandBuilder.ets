@@ -128,21 +128,55 @@ export class CommandBuilder {
   /** CPU 频率 ✅ */
   static cpuFreq(): string { return 'hidumper --cpufreq'; }
 
-  // ===== 卓易通穿透 [模拟器无法验证] =====
-  // 模拟器无安卓容器（bm dump -a | grep -i android 返回 RC=1），
-  // 需在装有卓易通的真机上验证。
+  // ===== 卓易通（ANCO）穿透 =====
+  //
+  // 【架构】卓易通 com.droi.tong / 出境易 com.easy.hmos.abroad 运行在
+  // rgm_hmos / isulad 管理的轻量级容器中（ANCO 架构），有独立网络命名空间和进程树。
+  // 鸿蒙宿主的 aa start 能把 -b com.android.settings 路由到容器内的安卓 Settings。
+  //
+  // 【真机实测 2026-11-04，Pura 70 Pro+】
+  //   ✅ 通知使用权 —— 可用，可重复，界面确实跳到容器内的
+  //      「通知使用权」页（列出短信转发器/万步健康/KDE Connect/MacroDroid 等容器内应用）
+  //   ❌ 无障碍 / 特殊权限 / 应用管理 —— Activity 在卓易通 Settings 里不存在，
+  //      aa 仍返回 RC=0（静默），但界面退回桌面
+  //
+  // 【关键：$ 转义】
+  // Activity 名含 `$`（内部类），必须写成 "....Settings\$XxxActivity"：
+  //   - 外层双引号保护整个 activity 名（避免被拆词）
+  //   - \$ 防止 daemon 的 sh -c 把 $NotificationAccessSettingsActivity 当变量展开为空
+  // 实测不转义时 sh 会展开成 com.android.settings.Settings，启动失败退回桌面。
+  //
+  // 【能力检测】宿主机上判断是否装了卓易通，看 com.droi.tong 是否在应用列表，
+  // 不能用 grep android/anco —— 容器包的 bundleName 里没有这两个词。
+
+  /** 通知使用权页 ✅ 真机验证可用（卓易通内应用的隐藏权限页） */
   static openNotificationAccess(): string {
-    return `aa start -b com.android.settings -a com.android.settings.Settings$NotificationAccessSettingsActivity`;
+    return `aa start -b com.android.settings -a "com.android.settings.Settings\\$NotificationAccessSettingsActivity"`;
   }
+
+  /** 无障碍设置 ❌ 真机验证：Activity 不存在，界面退回桌面 */
   static openAccessibility(): string {
-    return `aa start -b com.android.settings -a com.android.settings.Settings$AccessibilitySettingsActivity`;
+    return `aa start -b com.android.settings -a "com.android.settings.Settings\\$AccessibilitySettingsActivity"`;
   }
+
+  /** 特殊应用权限 ❌ 真机验证：Activity 不存在 */
   static openSpecialAccess(): string {
-    return `aa start -b com.android.settings -a com.android.settings.Settings$SpecialAccessSettingsActivity`;
+    return `aa start -b com.android.settings -a "com.android.settings.Settings\\$SpecialAccessSettingsActivity"`;
   }
-  /** 检测设备是否装有卓易通/安卓容器 */
-  static hasAndroidContainer(): string {
-    return 'bm dump -a | grep -ci android';
+
+  /** 容器内应用管理 ❌ 真机验证：Activity 不存在 */
+  static openManageApplications(): string {
+    return `aa start -b com.android.settings -a "com.android.settings.Settings\\$ManageApplicationsActivity"`;
+  }
+
+  /** 检测是否装了卓易通（容器宿主）✅ */
+  static hasZhuoyitong(): string {
+    return 'bm dump -a | grep -c com.droi.tong';
+  }
+
+  /** 检测是否装了出境易 ✅ */
+  static hasChujingyi(): string {
+    return 'bm dump -a | grep -c com.easy.hmos.abroad';
   }
 
   // ===== 通用 =====
