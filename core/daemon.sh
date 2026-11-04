@@ -212,18 +212,21 @@ ${LINE}"
     # ---- 协议 2：队列槽位（跨应用调用）----
     process_slots
 
-    # ---- 自动维护：充电防熄屏（充电时保持常亮，未充电时恢复正常熄屏）----
+    # ---- 自动维护：充电防熄屏（充电时保持常亮，未充电或开关关闭时恢复正常熄屏）----
     CHARGE_CHECK_COUNTER=$((CHARGE_CHECK_COUNTER + 1))
     if [ "${CHARGE_CHECK_COUNTER}" -ge 60 ]; then
         CHARGE_CHECK_COUNTER=0
+        AWAKE_CONF_DISABLED=0
+        if grep -q '"stayAwakeWhileCharging":false' "${CONFIG_FILE}" 2>/dev/null; then
+            AWAKE_CONF_DISABLED=1
+        fi
+
         CURRENT_PLUG=$(hilog -x -T BatteryInfo 2>/dev/null | grep -o 'pluggedType=[0-9]' | tail -n 1 | cut -d= -f2)
-        if [ -n "${CURRENT_PLUG}" ] && [ "${CURRENT_PLUG}" != "0" ]; then
-            if [ "${IS_KEEPING_AWAKE}" -ne 1 ]; then
-                power-shell timeout -o 86400000 >/dev/null 2>&1
-                IS_KEEPING_AWAKE=1
-            fi
+        if [ "${AWAKE_CONF_DISABLED}" -eq 0 ] && [ -n "${CURRENT_PLUG}" ] && [ "${CURRENT_PLUG}" != "0" ]; then
+            power-shell timeout -o 86400000 >/dev/null 2>&1
+            IS_KEEPING_AWAKE=1
         else
-            if [ "${IS_KEEPING_AWAKE}" -ne 0 ]; then
+            if [ "${IS_KEEPING_AWAKE}" -eq 1 ]; then
                 power-shell timeout -r >/dev/null 2>&1
                 IS_KEEPING_AWAKE=0
             fi

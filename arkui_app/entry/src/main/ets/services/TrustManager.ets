@@ -319,7 +319,14 @@ export class TrustManager {
   static setQueueEnabled(enabled: boolean, busDir: string = APP_BUS_DIR): void {
     const path = `${busDir}/${BUS_FILE_CONFIG}`;
     try {
-      const json = JSON.stringify({ queueEnabled: enabled });
+      let cfg: Record<string, Object> = {};
+      if (fileIo.accessSync(path)) {
+        try {
+          cfg = JSON.parse(fileIo.readTextSync(path)) as Record<string, Object>;
+        } catch (_) {}
+      }
+      cfg['queueEnabled'] = enabled;
+      const json = JSON.stringify(cfg);
       const f = fileIo.openSync(path, 0o2 | 0o1000);
       fileIo.writeSync(f.fd, json);
       fileIo.fsyncSync(f.fd);
@@ -327,6 +334,43 @@ export class TrustManager {
       hilog.info(DOMAIN, TAG, `setQueueEnabled: ${enabled}`);
     } catch (err) {
       hilog.warn(DOMAIN, TAG, `setQueueEnabled failed: ${err}`);
+    }
+  }
+
+  /** 读取充电防熄屏开关（默认开启） */
+  static isStayAwakeWhileCharging(busDir: string = APP_BUS_DIR): boolean {
+    const path = `${busDir}/${BUS_FILE_CONFIG}`;
+    try {
+      if (fileIo.accessSync(path)) {
+        const text = fileIo.readTextSync(path);
+        const cfg = JSON.parse(text) as Record<string, Object>;
+        return cfg['stayAwakeWhileCharging'] !== false;
+      }
+    } catch (err) {
+      // 默认开启
+    }
+    return true;
+  }
+
+  /** 设置充电防熄屏开关 */
+  static setStayAwakeWhileCharging(enabled: boolean, busDir: string = APP_BUS_DIR): void {
+    const path = `${busDir}/${BUS_FILE_CONFIG}`;
+    try {
+      let cfg: Record<string, Object> = {};
+      if (fileIo.accessSync(path)) {
+        try {
+          cfg = JSON.parse(fileIo.readTextSync(path)) as Record<string, Object>;
+        } catch (_) {}
+      }
+      cfg['stayAwakeWhileCharging'] = enabled;
+      const json = JSON.stringify(cfg);
+      const f = fileIo.openSync(path, 0o2 | 0o1000);
+      fileIo.writeSync(f.fd, json);
+      fileIo.fsyncSync(f.fd);
+      fileIo.closeSync(f);
+      hilog.info(DOMAIN, TAG, `setStayAwakeWhileCharging: ${enabled}`);
+    } catch (err) {
+      hilog.warn(DOMAIN, TAG, `setStayAwakeWhileCharging failed: ${err}`);
     }
   }
 

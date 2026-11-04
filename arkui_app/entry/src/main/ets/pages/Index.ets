@@ -49,6 +49,8 @@ struct Index {
   @State pendingCmd: string = '';
   /** 是否为极速总线模式令牌申请 */
   @State isTokenRequest: boolean = false;
+  /** 充电防熄屏开关 */
+  @State stayAwakeWhileCharging: boolean = true;
   private busClient: BusClient = new BusClient(DEFAULT_BUS_DIR);
 
   aboutToAppear(): void {
@@ -124,6 +126,7 @@ struct Index {
       this.needAuth = false;
       this.permDenied = false;
       this.connecting = false;
+      this.stayAwakeWhileCharging = TrustManager.isStayAwakeWhileCharging(dir);
       this.refreshDaemonStatus();
       if (!ok) {
         this.lastResult = `总线可读，但部分文件初始化失败：\n${dir}`;
@@ -259,6 +262,22 @@ struct Index {
     const result: CommandResult = await this.busClient.execute(cmd);
     this.lastResult = `[CMD] ${cmd}\n${result.output}`;
     this.isExecuting = false;
+  }
+
+  async toggleStayAwakeWhileCharging(isOn: boolean): Promise<void> {
+    this.stayAwakeWhileCharging = isOn;
+    const busDir = this.busClient.getBusDir();
+    TrustManager.setStayAwakeWhileCharging(isOn, busDir);
+    if (!isOn) {
+      await this.busClient.execute('power-shell timeout -r');
+      this.lastResult = '已关闭「充电时不熄屏」：已恢复系统默认熄屏超时。';
+    } else {
+      await this.busClient.execute(
+        'CURRENT_PLUG=$(hilog -x -T BatteryInfo 2>/dev/null | grep -o "pluggedType=[0-9]" | tail -n 1 | cut -d= -f2); ' +
+        'if [ -n "$CURRENT_PLUG" ] && [ "$CURRENT_PLUG" != "0" ]; then power-shell timeout -o 86400000; fi'
+      );
+      this.lastResult = '已开启「充电时不熄屏」：充电时自动保持常亮，拔出充电器后自动恢复。';
+    }
   }
 
   /** 电池：走原生 API（hidumper -s BatteryService 实测拿不到数据） */
@@ -526,6 +545,38 @@ struct Index {
         }
         .width('100%')
         .margin({ bottom: 8 })
+
+        // 充电时不熄屏开关
+        Row() {
+          Row() {
+            Text('⚡')
+              .fontSize(14)
+              .margin({ right: 6 })
+            Column() {
+              Text('充电时不熄屏')
+                .fontSize(13)
+                .fontColor('#E2E8F0')
+                .fontWeight(FontWeight.Medium)
+              Text(this.stayAwakeWhileCharging ? '已开启（插电长亮，拔电恢复）' : '已关闭（遵循系统熄屏设置）')
+                .fontSize(10)
+                .fontColor(this.stayAwakeWhileCharging ? '#38BDF8' : '#64748B')
+                .margin({ top: 2 })
+            }
+            .alignItems(HorizontalAlign.Start)
+          }
+          .layoutWeight(1)
+
+          Toggle({ type: ToggleType.Switch, isOn: this.stayAwakeWhileCharging })
+            .selectedColor('#38BDF8')
+            .onChange((isOn: boolean) => {
+              this.toggleStayAwakeWhileCharging(isOn);
+            })
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+        .backgroundColor('#1A2332')
+        .borderRadius(10)
+        .margin({ bottom: 12 })
 
         // 按键模拟
         this.SectionLabel('按键模拟')

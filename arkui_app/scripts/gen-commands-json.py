@@ -80,6 +80,114 @@ def extract_tags(text):
     return text.strip(), tags
 
 
+CUSTOM_CLEAN = {
+    '显式启动（推荐，需要 bundleName + abilityName）：': '显式启动应用组件',
+    '隐式启动（通过 URI / Action）[官方]：': 'URI/Action 隐式启动',
+    '查看系统当前所有运行中的 Ability 进程列表': '查看运行中 Ability 列表',
+    '查看当前所有最近任务与前台页面栈': '查看最近任务与前台栈',
+    '查看指定 Ability 详细信息': '查看指定 Ability 详情',
+    '2.1.5 测试框架 [官方]': '启动单元测试框架',
+    '文本输入（仅 ASCII，最大 2000 字符）': '模拟输入文本',
+    '捏合 (<100 缩小, >100 放大)': '双指捏合缩放',
+    '方向滑动 (0=左 1=右 2=上 3=下)': '按指定方向滑动',
+    'Ability 管理器（替代 aa dump）': '查询 Ability 管理器',
+    '直接生成标准的 aa start 启动指令列表': '提取前台启动指令',
+    '方法 B：延时 3 秒精准抓取当前屏幕应用（解决前台切换问题）': '延时 3 秒抓取前台',
+    '1. 打开容器内应用管理列表（查看所有已装应用、存储占用、版本、强停与卸载）': '打开容器应用管理',
+    '2. 打开容器内“通知使用权”授权页（直接在列表勾选短信转发器/KDE Connect）': '打开容器通知使用权',
+    '3. 打开容器内特殊访问权限设置总览': '打开容器特殊权限',
+    '实测输出（毫秒级返回，直接复制可用）：': '启动应用组件',
+    '包名 + 应用名称（label）': '包名与应用名称',
+    '按级别过滤 (D/I/W/E/F)': '按级别过滤日志',
+    '抓性能trace.ftrace': '抓取性能 Trace',
+    '示例：带 moduleName': '指定模块启动',
+    '屏幕状态 AWAKE/SLEEP': '查询屏幕电源状态',
+}
+
+
+def polish_desc(cmd, desc):
+    """精简注释，言简意赅表达核心动作（控制在 16 字内）"""
+    desc = clean(desc)
+    if desc in CUSTOM_CLEAN:
+        return CUSTOM_CLEAN[desc]
+
+    # 命令特征匹配（最准确简明）
+    if 'com.aistra.hail' in cmd:
+        return '启动小黑屋 (Hail)'
+    if 'NotificationAccessSettings' in cmd:
+        return '打开容器通知使用权'
+    if 'SpecialAccessSettings' in cmd:
+        return '打开容器特殊权限'
+    if 'ManageApplications' in cmd:
+        return '打开容器应用管理'
+    if 'com.easy.abroad' in cmd:
+        return '启动出境易'
+    if 'kdeconnect' in cmd:
+        return '启动 KDE Connect'
+    if 'grep -oE' in cmd and 'aa start' in cmd:
+        return '提取前台启动指令'
+    if 'dumpLayout' in cmd and 'sleep 3' in cmd:
+        return '延时抓取前台包名'
+    if 'dumpLayout' in cmd and '-w' in cmd:
+        return '转储焦点窗口布局'
+    if 'dumpLayout' in cmd:
+        return '转储屏幕布局'
+    if 'MemoryManagerService' in cmd:
+        return '查询内存服务状态'
+    if 'AbilityManagerService' in cmd:
+        return '查询 Ability 服务'
+    if 'uinput -T -c 630 1422' in cmd:
+        return '单击指定屏幕坐标'
+    if 'uinput -T -m 1100 50' in cmd:
+        return '下拉控制中心示例'
+    if 'uinput -T -m 300 900' in cmd:
+        return '多指连续滑动长按'
+    if 'uinput -K -l' in cmd:
+        return '长按物理按键'
+    if 'uinput -K -r' in cmd:
+        return '连击物理按键'
+    if 'uinput -K -i' in cmd:
+        return '设置按键事件间隔'
+    if 'uinput -T -i' in cmd:
+        return '设置触控事件间隔'
+    if 'uinput -T -g' in cmd:
+        return '双点拖拽手势'
+    if 'aa test' in cmd:
+        return '启动单元测试框架'
+    if 'aa dump -p' in cmd:
+        return '查看待挂起任务'
+    if 'aa dump -e' in cmd:
+        return '查看指定元素信息'
+    if 'aa dump -a' in cmd:
+        return '查看所有组件状态'
+    if 'aa start -b com.example.app' in cmd:
+        return '指定模块启动应用'
+    if 'aa start -b com.huawei.hmos.calculator' in cmd:
+        return '启动系统计算器'
+    if 'aa start -b com.huawei.hmos.settings' in cmd:
+        return '启动系统设置'
+    if 'aa start -A ohos.want.action.viewData' in cmd:
+        return '浏览器打开网页'
+    if 'aa start -U kwai://home' in cmd:
+        return 'Schema 唤起快手'
+    if 'aa start -U myscheme' in cmd:
+        return '带参数启动应用'
+    if 'aa force-stop' in cmd:
+        return '强制停止应用进程'
+    if 'aa stop-service' in cmd:
+        return '停止 Service 组件'
+
+    # 去掉冗余前缀和括号说明
+    desc = re.sub(r'^(示例|方法\s*[A-Z]|步骤\s*\d|[0-9]+[\.、])\s*[：:]?\s*', '', desc)
+    desc = re.sub(r'（[^）]*）', '', desc)
+    desc = re.sub(r'\([^)]*\)', '', desc)
+    desc = desc.strip(' ：:，,。')
+
+    if len(desc) > 16:
+        desc = desc[:16]
+    return desc
+
+
 def main():
     if not os.path.exists(SRC):
         print(f'[!] 找不到源文件: {SRC}')
@@ -123,11 +231,11 @@ def main():
             if it['cmd'] == cmd:
                 # 若旧项没有 desc 但新传入有 desc，则补充
                 if not it.get('desc') and desc:
-                    it['desc'] = clean(desc)
+                    it['desc'] = polish_desc(cmd, desc)
                     if tags:
                         it['tags'] = tags
                 return
-        item = {'cmd': cmd, 'desc': clean(desc)}
+        item = {'cmd': cmd, 'desc': polish_desc(cmd, desc)}
         if tags:
             item['tags'] = tags
         g['items'].append(item)

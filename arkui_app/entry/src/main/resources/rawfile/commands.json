@@ -62,7 +62,7 @@
             },
             {
               "cmd": "aa force-stop",
-              "desc": "强制停止进程",
+              "desc": "强制停止应用进程",
               "tags": [
                 "官方",
                 "实机"
@@ -70,14 +70,14 @@
             },
             {
               "cmd": "aa dump",
-              "desc": "打印应用组件信息（已废弃）",
+              "desc": "打印应用组件信息",
               "tags": [
                 "官方"
               ]
             },
             {
               "cmd": "aa test",
-              "desc": "启动测试框架",
+              "desc": "启动单元测试框架",
               "tags": [
                 "官方"
               ]
@@ -119,64 +119,64 @@
             },
             {
               "cmd": "aa pre-start",
-              "desc": "应用预启动（API 26+）",
+              "desc": "应用预启动",
               "tags": [
                 "官方"
               ]
             },
             {
               "cmd": "aa start -b <bundleName> -a <abilityName> [-m <moduleName>]",
-              "desc": "显式启动（推荐，需要 bundleName + abilityName）："
+              "desc": "显式启动应用组件"
             },
             {
               "cmd": "aa start -b com.huawei.hmos.settings -a com.huawei.hmos.settings.MainAbility",
-              "desc": "示例：启动系统设置",
+              "desc": "启动系统设置",
               "tags": [
                 "实机"
               ]
             },
             {
               "cmd": "aa start -b com.huawei.hmos.calculator -a MainAbility",
-              "desc": "示例：启动计算器",
+              "desc": "启动系统计算器",
               "tags": [
                 "实机"
               ]
             },
             {
               "cmd": "aa start -b com.example.app -a EntryAbility -m entry",
-              "desc": "示例：带 moduleName",
+              "desc": "指定模块启动",
               "tags": [
                 "官方"
               ]
             },
             {
               "cmd": "aa start -U <URI> [-A <action>] [-t <type>] [-e <entity>]",
-              "desc": "隐式启动（通过 URI / Action）[官方]："
+              "desc": "URI/Action 隐式启动"
             },
             {
               "cmd": "aa start -A ohos.want.action.viewData -U https://www.example.com",
-              "desc": "打开网页",
+              "desc": "浏览器打开网页",
               "tags": [
                 "官方"
               ]
             },
             {
               "cmd": "aa start -U kwai://home",
-              "desc": "打开 Scheme",
+              "desc": "Schema 唤起快手",
               "tags": [
                 "社区"
               ]
             },
             {
               "cmd": "aa start -U myscheme://www.test.com:8080/path --pi paramNumber 1 --pb paramBoolean true --ps paramString teststring",
-              "desc": "带参数启动",
+              "desc": "带参数启动应用",
               "tags": [
                 "官方"
               ]
             },
             {
               "cmd": "aa force-stop <bundleName>",
-              "desc": "强制停止整个进程",
+              "desc": "强制停止应用进程",
               "tags": [
                 "官方",
                 "实机"
@@ -191,42 +191,42 @@
             },
             {
               "cmd": "aa dump -l",
-              "desc": "查看当前所有最近任务与前台页面栈",
+              "desc": "查看最近任务与前台栈",
               "tags": [
                 "实机"
               ]
             },
             {
               "cmd": "aa dump -r",
-              "desc": "查看系统当前所有运行中的 Ability 进程列表",
+              "desc": "查看运行中 Ability 列表",
               "tags": [
                 "实机"
               ]
             },
             {
               "cmd": "aa dump -a",
-              "desc": "查看所有已注册的能力记录",
+              "desc": "查看所有组件状态",
               "tags": [
                 "官方"
               ]
             },
             {
               "cmd": "aa dump -i <abilityRecordId>",
-              "desc": "查看指定 Ability 详细信息",
+              "desc": "查看指定 Ability 详情",
               "tags": [
                 "官方"
               ]
             },
             {
               "cmd": "aa dump -e <elementName>",
-              "desc": "查看扩展组件信息",
+              "desc": "查看指定元素信息",
               "tags": [
                 "官方"
               ]
             },
             {
               "cmd": "aa dump -p",
-              "desc": "查看应用进程信息",
+              "desc": "查看待挂起任务",
               "tags": [
                 "官方"
               ]
@@ -241,7 +241,7 @@
             },
             {
               "cmd": "aa appdebug -b <bundleName> [-p]",
-              "desc": "设置等待调试（-p 持久化）"
+              "desc": "设置等待调试"
             },
             {
               "cmd": "aa appdebug -c",
@@ -257,7 +257,7 @@
             },
             {
               "cmd": "aa test -b <bundleName> [-m <moduleName>] -s unittest <testRunner> [options]",
-              "desc": "2.1.5 测试框架 [官方]"
+              "desc": "启动单元测试框架"
             },
             {
               "cmd": "aa send-memory-level -p <pid> -l <memoryLevel>",
@@ -265,7 +265,7 @@
             },
             {
               "cmd": "aa pre-start -m 1 -b <bundleName> -u <userId>",
-              "desc": "应用预启动（API 26+）"
+              "desc": "应用预启动"
             }
           ]
         },
@@ -394,14 +394,14 @@
             },
             {
               "cmd": "bm dump -a -l",
-              "desc": "包名 + 应用名称（label）",
+              "desc": "包名与应用名称",
               "tags": [
                 "官方"
               ]
             },
             {
               "cmd": "bm dump -n <bundleName>",
-              "desc": "单个应用详情（JSON）",
+              "desc": "单个应用详情",
               "tags": [
                 "实机"
               ]
@@ -478,14 +478,14 @@
             },
             {
               "cmd": "bm install -p /data/local/tmp/app.hap -g",
-              "desc": "自动授权（debug）",
+              "desc": "自动授权",
               "tags": [
                 "官方"
               ]
             },
             {
               "cmd": "bm install -p /data/local/tmp/app.app",
-              "desc": "安装 APP 包（API 22+）",
+              "desc": "安装 APP 包",
               "tags": [
                 "官方"
               ]
@@ -641,7 +641,7 @@
           "items": [
             {
               "cmd": "hidumper -s PowerManagerService -a -s",
-              "desc": "屏幕状态 AWAKE/SLEEP",
+              "desc": "查询屏幕电源状态",
               "tags": [
                 "社区"
               ]
@@ -697,7 +697,7 @@
             },
             {
               "cmd": "uinput -T -c 630 1422",
-              "desc": "单击",
+              "desc": "单击指定屏幕坐标",
               "tags": [
                 "官方",
                 "实机"
@@ -727,7 +727,7 @@
             },
             {
               "cmd": "uinput -T -m 1100 50 1100 900 250",
-              "desc": "滑动",
+              "desc": "下拉控制中心示例",
               "tags": [
                 "官方",
                 "实机"
@@ -735,28 +735,28 @@
             },
             {
               "cmd": "uinput -T -m <x1> <y1> <x2> <y2> -k <keep_time_ms> [smooth_time_ms]",
-              "desc": "滑动（带保持时间）",
+              "desc": "滑动",
               "tags": [
                 "官方"
               ]
             },
             {
               "cmd": "uinput -T -m 300 900 300 2000 600 900 600 2000 900 900 900 2000 -k 1000 200",
-              "desc": "三指滑动",
+              "desc": "多指连续滑动长按",
               "tags": [
                 "官方"
               ]
             },
             {
               "cmd": "uinput -T -g <x1> <y1> <x2> <y2> [press_time_ms] [total_time_ms]",
-              "desc": "拖拽",
+              "desc": "双点拖拽手势",
               "tags": [
                 "官方"
               ]
             },
             {
               "cmd": "uinput -T -i <time_ms>",
-              "desc": "设置事件间隔",
+              "desc": "设置触控事件间隔",
               "tags": [
                 "官方"
               ]
@@ -783,21 +783,21 @@
             },
             {
               "cmd": "uinput -K -l <keyCode> [duration_ms]",
-              "desc": "长按",
+              "desc": "长按物理按键",
               "tags": [
                 "官方"
               ]
             },
             {
               "cmd": "uinput -K -r <keyCode> [duration_ms]",
-              "desc": "持续重复输入",
+              "desc": "连击物理按键",
               "tags": [
                 "官方"
               ]
             },
             {
               "cmd": "uinput -K -t \"Hello,World!\"",
-              "desc": "文本输入（仅 ASCII，最大 2000 字符）",
+              "desc": "模拟输入文本",
               "tags": [
                 "官方"
               ]
@@ -808,7 +808,7 @@
             },
             {
               "cmd": "uinput -K -i <time_ms>",
-              "desc": "设置事件间隔",
+              "desc": "设置按键事件间隔",
               "tags": [
                 "官方"
               ]
@@ -823,7 +823,7 @@
             },
             {
               "cmd": "uinput -M -d <buttonId>",
-              "desc": "按下 (0=左 1=右 2=中)"
+              "desc": "按下"
             },
             {
               "cmd": "uinput -M -u <buttonId>",
@@ -839,7 +839,7 @@
             },
             {
               "cmd": "uinput -M -m <x> <y> -s <number>",
-              "desc": "滚轮 (正数向后)"
+              "desc": "滚轮"
             },
             {
               "cmd": "uinput -M -g <x1> <y1> <x2> <y2> [total_time_ms]",
@@ -875,7 +875,7 @@
             },
             {
               "cmd": "uinput -P -p <x> <y> <scalePercent>",
-              "desc": "捏合 (<100 缩小, >100 放大)"
+              "desc": "双指捏合缩放"
             },
             {
               "cmd": "uinput -P -s <startX> <startY> <endX> <endY>",
@@ -883,7 +883,7 @@
             },
             {
               "cmd": "uinput -P -r <degrees>",
-              "desc": "旋转（官方注明当前版本可能无效）"
+              "desc": "旋转"
             },
             {
               "cmd": "uinput -T -k -s <x1> <y1> <x2> <y2> [interval_ms]",
@@ -895,7 +895,7 @@
             },
             {
               "cmd": "uinput enable_key_status 1 [duration_seconds]",
-              "desc": "启用（默认 10 秒）"
+              "desc": "启用"
             },
             {
               "cmd": "uinput enable_key_status 0",
@@ -935,7 +935,7 @@
             },
             {
               "cmd": "uitest uiInput dircFling <direction>",
-              "desc": "方向滑动 (0=左 1=右 2=上 3=下)"
+              "desc": "按指定方向滑动"
             },
             {
               "cmd": "uitest uiInput inputText <x> <y> <text>",
@@ -943,7 +943,7 @@
             },
             {
               "cmd": "uitest uiInput keyEvent <keyName>",
-              "desc": "按键 (Home/Back)"
+              "desc": "按键"
             },
             {
               "cmd": "uitest uiInput keyEvent <keyID> [keyID2]",
@@ -951,7 +951,7 @@
             },
             {
               "cmd": "uitest screenCap",
-              "desc": "默认 /data/local/tmp"
+              "desc": "默认 /data/local/t"
             },
             {
               "cmd": "uitest screenCap -p /data/local/tmp/1.png",
@@ -959,11 +959,11 @@
             },
             {
               "cmd": "uitest dumpLayout -p /data/local/tmp/",
-              "desc": "导出控件树 JSON"
+              "desc": "转储屏幕布局"
             },
             {
               "cmd": "uitest dumpLayout -w <FocusWinId> -p /data/local/tmp/focus_layout.json",
-              "desc": "导出指定窗口的控件树",
+              "desc": "转储焦点窗口布局",
               "tags": [
                 "实机"
               ]
@@ -1006,7 +1006,7 @@
             },
             {
               "cmd": "hidumper -ls",
-              "desc": "系统能力（SA）列表",
+              "desc": "系统能力列表",
               "tags": [
                 "官方",
                 "实机"
@@ -1106,18 +1106,18 @@
             },
             {
               "cmd": "hidumper -s MemoryManagerService -a -a",
-              "desc": "内存管理",
+              "desc": "查询内存服务状态",
               "tags": [
                 "社区"
               ]
             },
             {
               "cmd": "hidumper -s MemoryManagerService -a -r",
-              "desc": "5.2 核心硬件与服务查询"
+              "desc": "查询内存服务状态"
             },
             {
               "cmd": "hidumper -s AbilityManagerService",
-              "desc": "Ability 管理器（替代 aa dump）",
+              "desc": "查询 Ability 管理器",
               "tags": [
                 "官方"
               ]
@@ -1359,7 +1359,7 @@
             },
             {
               "cmd": "hilog -L <level>",
-              "desc": "按级别过滤 (D/I/W/E/F)",
+              "desc": "按级别过滤日志",
               "tags": [
                 "社区"
               ]
@@ -1498,7 +1498,7 @@
           "items": [
             {
               "cmd": "bytrace -t 5 -b 4096 --overwrite ability app > /data/local/tmp/trace",
-              "desc": "抓性能trace.ftrace"
+              "desc": "抓取性能 Trace"
             }
           ]
         },
@@ -1778,15 +1778,15 @@
           "items": [
             {
               "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$NotificationAccessSettingsActivity\"",
-              "desc": "通知使用权页"
+              "desc": "打开容器通知使用权"
             },
             {
               "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$SpecialAccessSettingsActivity\"",
-              "desc": "特殊访问权限页"
+              "desc": "打开容器特殊权限"
             },
             {
               "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$ManageApplicationsActivity\"",
-              "desc": "已装应用列表（约10秒）"
+              "desc": "打开容器应用管理"
             },
             {
               "cmd": "aa start -b com.easy.hmos.abroad -a EntryAbility",
@@ -1799,7 +1799,7 @@
           "items": [
             {
               "cmd": "uitest dumpLayout -p /data/local/tmp/ui.json",
-              "desc": "导出界面控件树（找按钮坐标）"
+              "desc": "转储屏幕布局"
             },
             {
               "cmd": "uinput -T -c 540 1200",
@@ -1828,7 +1828,7 @@
           "items": [
             {
               "cmd": "aa start -b com.aistra.hail -a com.aistra.hail.ui.main.MainActivity",
-              "desc": "实测可用的完整例子"
+              "desc": "启动小黑屋 (Hail)"
             },
             {
               "cmd": "aa start -b com.easy.hmos.abroad -a EntryAbility",
@@ -1841,47 +1841,47 @@
           "items": [
             {
               "cmd": "hilog -x 2>/dev/null | grep -oE '[A-Za-z0-9_.$]+/[A-Za-z0-9_.]+/entry/0' | sort -u | sed 's|/entry/0||' | sed 's|\\(.*\\)/\\(.*\\)|aa start -b \\2 -a \\1|'",
-              "desc": "直接生成标准的 aa start 启动指令列表"
+              "desc": "提取前台启动指令"
             },
             {
               "cmd": "aa start -b com.aistra.hail -a com.aistra.hail.ui.main.MainActivity",
-              "desc": "实测输出（毫秒级返回，直接复制可用）："
+              "desc": "启动应用组件"
             },
             {
               "cmd": "aa start -b com.android.settings -a com.android.settings.Settings$ManageApplicationsActivity",
-              "desc": "实测输出（毫秒级返回，直接复制可用）："
+              "desc": "启动应用组件"
             },
             {
               "cmd": "aa start -b com.android.settings -a com.android.settings.Settings$NotificationAccessSettingsActivity",
-              "desc": "实测输出（毫秒级返回，直接复制可用）："
+              "desc": "启动应用组件"
             },
             {
               "cmd": "aa start -b com.easy.abroad -a com.easy.abroad.activities.MainActivity",
-              "desc": "实测输出（毫秒级返回，直接复制可用）："
+              "desc": "启动应用组件"
             },
             {
               "cmd": "aa start -b org.kde.kdeconnect_tp -a org.kde.kdeconnect.UserInterface.MainActivity",
-              "desc": "实测输出（毫秒级返回，直接复制可用）："
+              "desc": "启动应用组件"
             },
             {
               "cmd": "hilog -x 2>/dev/null | grep -oE '[A-Za-z0-9_.$]+/[A-Za-z0-9_.]+/entry/0' | sort -u | sed 's|/entry/0||' | sed 's|\\(.*\\)/\\(.*\\)|\\2 : \\1|'",
-              "desc": "实测输出（毫秒级返回，直接复制可用）："
+              "desc": "启动应用组件"
             },
             {
               "cmd": "sleep 3 && uitest dumpLayout -p /data/local/tmp/d.json >/dev/null 2>&1 && grep -oE '\"bundleName\":\"[^\"]+\"|\"abilityName\":\"[^\"]+\"' /data/local/tmp/d.json | grep -v 'sceneboard' | sort -u",
-              "desc": "方法 B：延时 3 秒精准抓取当前屏幕应用（解决前台切换问题）"
+              "desc": "延时 3 秒抓取前台"
             },
             {
               "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$ManageApplicationsActivity\"",
-              "desc": "1. 打开容器内应用管理列表（查看所有已装应用、存储占用、版本、强停与卸载）"
+              "desc": "打开容器应用管理"
             },
             {
               "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$NotificationAccessSettingsActivity\"",
-              "desc": "2. 打开容器内“通知使用权”授权页（直接在列表勾选短信转发器/KDE Connect）"
+              "desc": "打开容器通知使用权"
             },
             {
               "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$SpecialAccessSettingsActivity\"",
-              "desc": "3. 打开容器内特殊访问权限设置总览"
+              "desc": "打开容器特殊权限"
             }
           ]
         }
