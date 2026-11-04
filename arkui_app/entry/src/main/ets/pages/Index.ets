@@ -589,6 +589,8 @@ struct Index {
         busClient: this.busClient,
         cmdHistory: $cmdHistory,
         needAuth: this.needAuth,
+        daemonOnline: this.daemonOnline,
+        daemonPid: this.daemonPid,
         onRequestAuth: () => {
           this.authBusDir();
         },

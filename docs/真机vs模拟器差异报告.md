@@ -283,4 +283,79 @@ OUT=$(timeout -k 5 20 sh -c "${CMD}" 2>&1 < /dev/null)
 
 ---
 
+## 七、真机实测 60 条指令明细表
+
+> 设备：Pura 70 Pro+ (HBN-AL80) / HarmonyOS 7.0.0.109 / arm64-v8a  
+> 链路：文件总线（cmd.req / cmd.res）与 App 完全一致
+
+### 1. 环境与系统基础
+| 状态 | 命令 | RC | 输出摘要 |
+|---|---|---|---|
+| ✅ | `id` | 0 | `uid=2000(shell) gid=2000(shell) groups=2000(shell),1006` |
+| ✅ | `uname -a` | 0 | `HarmonyOS localhost HongMeng Kernel 1.13.0 #1 SMP Sat S` |
+| ✅ | `uname -m` | 0 | `aarch64` |
+| ✅ | `date` | 0 | `Wed Nov 4 CST 2026` |
+| ✅ | `uptime` | 0 | `up 3 days, load average: 12` |
+| ✅ | `toybox \| wc -w` | 0 | 149 |
+
+### 2. 包管理 (bm)
+| 状态 | 命令 | RC | 输出摘要 |
+|---|---|---|---|
+| ✅ | `bm dump -a \| wc -l` | 0 | 225 |
+| ✅ | `bm dump -n com.octahedron.hmpriv \| head -3` | 0 | `com.octahedron.hmpriv:` |
+| ✅ | `bm dump -n com.nonexistent.app` | 0 | `error: failed to get information...` |
+| ✅ | `bm get -u` | 0 | `udid of current device is : ...` |
+| ✅ | `bm clean -c -n com.octahedron.hmpriv` | 0 | `clean bundle cache files successfully.` |
+
+### 3. 系统参数 (param)
+| 状态 | 命令 | RC | 输出摘要 |
+|---|---|---|---|
+| ✅ | `param get const.product.model` | 0 | `HBN-AL80` |
+| ✅ | `param get const.product.brand` | 0 | `HUAWEI` |
+| ✅ | `param get const.ohos.apiversion` | 0 | `26` |
+| ✅ | `param get const.product.cpu.abilist` | 0 | `arm64-v8a` |
+| ✅ | `param get \| wc -l` | 0 | 689 |
+
+### 4. 电源与屏幕
+| 状态 | 命令 | RC | 输出摘要 |
+|---|---|---|---|
+| ✅ | `power-shell timeout -o 600000` | 0 | (设置成功，无输出) |
+| ✅ | `power-shell timeout -r` | 0 | (恢复成功，无输出) |
+| ✅ | `power-shell setmode 600` | 0 | 正常模式生效 |
+| ✅ | `power-shell setmode 601` | 0 | 省电模式生效 |
+| ✅ | `power-shell setmode 602` | 0 | 超级省电生效 |
+| ✅ | `snapshot_display -f /data/local/tmp/hmpriv/vd.jpeg` | 0 | 成功生成 169KB 截图 |
+
+### 5. 输入注入 (uinput / uitest)
+| 状态 | 命令 | RC | 输出摘要 |
+|---|---|---|---|
+| ✅ | `uinput -T -c 658 1400` | 0 | `click coordinate: (658, 1400)` |
+| ✅ | `uinput -T -m 658 2000 658 1200 300` | 0 | `startX:658, endX:658...` |
+| ✅ | `uinput -K -d 16 -u 16` | 0 | `you raised the key 16` |
+| ✅ | `uitest dumpLayout -p /data/local/tmp/hmpriv/vd.json` | 0 | 成功抓取布局 JSON |
+| ✅ | `uitest uiInput click 658 1400` | 0 | `No Error` |
+
+### 6. 系统状态探针 (hidumper)
+| 状态 | 命令 | RC | 输出摘要 |
+|---|---|---|---|
+| ✅ | `hidumper -ls \| wc -l` | 0 | 83 个服务 |
+| ✅ | `hidumper --cpufreq \| head -3` | 0 | 抓取成功 |
+| ✅ | `hidumper --cpuusage \| head -3` | 0 | 抓取成功 |
+| ⚠️ | `hidumper -s BatteryService` | 0 | 仅标题（无输出数据） |
+| ⚠️ | `hidumper -s WindowManagerService` | 0 | 仅标题（无输出数据） |
+
+### 7. 日志与工具
+| 状态 | 命令 | RC | 输出摘要 |
+|---|---|---|---|
+| ✅ | `hilog -x \| wc -l` | 0 | 7796 行 |
+| ✅ | `hisysevent -l \| wc -l` | 0 | 213 条 |
+| ✅ | `ps -ef \| wc -l` | 0 | 218 个进程 |
+| ✅ | `pidof com.octahedron.hmpriv` | 0 | 返回 PID |
+| ✅ | `df -h /data` | 0 | 磁盘统计正常 |
+| ✅ | `free -m` | 0 | 内存统计正常 |
+| ✅ | `sqlite3 --version` | 0 | `3.44.4` |
+| ❌ | `toybox \| grep -c awk` | 1 | 真机未内置 awk |
+
+---
+
 _报告日期：2026-11-04 | 验证脚本：`scripts/verify-device.sh`_

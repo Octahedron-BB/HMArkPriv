@@ -15,16 +15,48 @@ import { CommandPanel } from './CommandPanel';
 
 @Component
 export struct TerminalConsole {
-  @State output: string = 'HMArkPriv Terminal v1.0\n等待连接 daemon...\n\n';
+  @State output: string = 'HMArkPriv Terminal v1.0\n等待连接 daemon...\n';
   @State inputCmd: string = '';
   @State isExecuting: boolean = false;
   /** 指令手册侧边栏是否展开 */
   @State showPanel: boolean = false;
   @Link cmdHistory: string[];
   @Prop needAuth: boolean = true;
+  @Prop @Watch('onDaemonStatusChanged') daemonOnline: boolean = false;
+  @Prop @Watch('onDaemonStatusChanged') daemonPid: number = 0;
+  private hasReportedConnected: boolean = false;
   busClient: BusClient = new BusClient();
   onRequestAuth: () => void = () => {};
   private scroller: Scroller = new Scroller();
+
+  aboutToAppear() {
+    this.checkInitialDaemon();
+  }
+
+  async checkInitialDaemon(): Promise<void> {
+    if (this.daemonOnline && !this.hasReportedConnected) {
+      this.hasReportedConnected = true;
+      this.appendConnectedLog(this.daemonPid);
+      return;
+    }
+    const status = await this.busClient.checkDaemonStatus();
+    if (status && !this.hasReportedConnected) {
+      this.hasReportedConnected = true;
+      this.appendConnectedLog(status.pid);
+    }
+  }
+
+  onDaemonStatusChanged(): void {
+    if (this.daemonOnline && !this.hasReportedConnected) {
+      this.hasReportedConnected = true;
+      this.appendConnectedLog(this.daemonPid);
+    }
+  }
+
+  private appendConnectedLog(pid: number): void {
+    const pidInfo = pid > 0 ? ` (PID: ${pid})` : '';
+    this.output += `已连接 daemon${pidInfo}\n\n`;
+  }
 
   build() {
     Stack({ alignContent: Alignment.TopEnd }) {
