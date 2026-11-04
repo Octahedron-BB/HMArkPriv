@@ -58,13 +58,16 @@ export class CommandBuilder {
   /** 已装应用列表 ✅ 输出为「TAB + 包名」格式，见 ResponseParser.parseAppList */
   static listApps(): string { return 'bm dump -a'; }
 
+  /** 已装应用全量列表（含中文名称与包名 JSON 数组） ✅ 150ms 极速返回 */
+  static listAppsWithLabels(): string { return 'bm dump -a -l'; }
+
   /** 查询单个应用详情 ✅ 也用于判断是否已安装 */
   static appDetail(bundle: string): string {
     return `bm dump -n ${bundle}`;
   }
 
   /** 启动应用 ⚠️ 无输出，需先 appDetail 校验包存在 */
-  static startApp(bundle: string, ability: string): string {
+  static startApp(bundle: string, ability: string = 'EntryAbility'): string {
     return `aa start -b ${bundle} -a ${ability}`;
   }
 
@@ -81,6 +84,16 @@ export class CommandBuilder {
   /** 清数据 ✅ */
   static cleanData(bundle: string): string {
     return `bm clean -d -n ${bundle}`;
+  }
+
+  /** 免 Root 卸载应用（支持 -k 保留数据） */
+  static uninstallApp(bundle: string, keepData: boolean = false): string {
+    return keepData ? `bm uninstall -n ${bundle} -k -u 100` : `bm uninstall -n ${bundle} -u 100`;
+  }
+
+  /** 一键重置权限（恢复未授权状态） */
+  static resetAppPermissions(bundle: string): string {
+    return `atm perm -r -b ${bundle}`;
   }
 
   /**

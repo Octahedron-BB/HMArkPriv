@@ -31,6 +31,17 @@ export interface AppInfo {
   installedPath?: string;
 }
 
+export interface AppItem {
+  bundleName: string;
+  label: string;
+  isSystem: boolean;
+}
+
+interface RawDumpItem {
+  bundleName?: string;
+  label?: string;
+}
+
 export interface BatteryInfo {
   level: number;        // 电量 %，-1 表示未知
   charging: boolean;
@@ -90,6 +101,59 @@ export class ResponseParser {
       }
     }
     return apps;
+  }
+
+  /**
+   * 判断包名是否偏向系统应用
+   */
+  static isSystemApp(bundle: string): boolean {
+    if (bundle.startsWith('com.huawei.hmos.') ||
+        bundle.startsWith('com.ohos.') ||
+        bundle.startsWith('com.huawei.system') ||
+        bundle.startsWith('com.huawei.hmsapp.') ||
+        bundle === 'com.huawei.appgallery') {
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * 解析 bm dump -a -l 输出（带 Label 与 BundleName 的 JSON 格式）。
+   * 150ms 极速解析。若遇到旧格式则自动回退兼容。
+   */
+  static parseAppListWithLabels(raw: string): AppItem[] {
+    const list: AppItem[] = [];
+    const trimmed = raw.trim();
+    if (trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed) as RawDumpItem[];
+        for (let i = 0; i < parsed.length; i++) {
+          const item = parsed[i];
+          if (item && item.bundleName) {
+            const b = item.bundleName.trim();
+            const l = (item.label && item.label.trim()) ? item.label.trim() : b;
+            const isSys = ResponseParser.isSystemApp(b);
+            list.push({ bundleName: b, label: l, isSystem: isSys });
+          }
+        }
+        return list;
+      } catch (_e) {
+        // 解析异常时回退
+      }
+    }
+
+    // 回退旧文本解析
+    const legacy = ResponseParser.parseAppList(raw);
+    for (let i = 0; i < legacy.length; i++) {
+      const item = legacy[i];
+      const isSys = ResponseParser.isSystemApp(item.bundleName);
+      list.push({
+        bundleName: item.bundleName,
+        label: item.bundleName,
+        isSystem: isSys
+      });
+    }
+    return list;
   }
 
   /**

@@ -17,6 +17,7 @@ import { BatteryReader } from '../services/BatteryReader';
 import { TerminalConsole } from '../components/TerminalConsole';
 import { DaemonStatusCard } from '../components/DaemonStatusCard';
 import { OpenApiTab } from '../components/OpenApiTab';
+import { AppManageTab } from '../components/AppManageTab';
 import { CrossAppHandler, PendingCall } from '../services/CrossAppHandler';
 import { TrustManager } from '../services/TrustManager';
 import { CommandBuilder } from '../utils/CommandBuilder';
@@ -450,9 +451,9 @@ struct Index {
         }
         .tabBar(this.TabItem('终端', 1))
 
-        // Tab 3: 应用管理（Phase 3 占位）
+        // Tab 3: 应用管理（Phase 3 实装）
         TabContent() {
-          this.PlaceholderTab('应用管理', 'Phase 3 开发中')
+          AppManageTab({ busClient: this.busClient })
         }
         .tabBar(this.TabItem('应用', 2))
 

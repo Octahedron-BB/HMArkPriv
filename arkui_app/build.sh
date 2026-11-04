@@ -15,22 +15,28 @@
 # ==============================================================================
 set -e
 
-DEVECO_HOME="D:/DevEco Studio"
-# PATH 里必须用 POSIX 风格路径：Windows 风格路径带冒号(D:)，拼进 PATH
-# 后会被 MSYS 错误切分，导致 Node 找不到 java（spawn java ENOENT）
-JBR_BIN="/d/DevEco Studio/jbr/bin"
-NODE_EXE="$DEVECO_HOME/tools/node/node.exe"
-HVIGOR_JS="$DEVECO_HOME/tools/hvigor/bin/hvigorw.js"
-# 这个要给 hvigor 用，保持 Windows 反斜杠风格
-SDK_WIN="D:\\DevEco Studio\\sdk"
-
-if [ ! -f "$HVIGOR_JS" ]; then
-  echo "[!] 找不到 hvigorw.js，请确认 DevEco Studio 安装路径并修改 DEVECO_HOME"
-  exit 1
+if [ -d "/Applications/DevEco-Studio.app/Contents" ]; then
+  DEVECO_HOME="/Applications/DevEco-Studio.app/Contents"
+  JBR_BIN="$DEVECO_HOME/jbr/Contents/Home/bin"
+  NODE_EXE="$DEVECO_HOME/tools/node/bin/node"
+  HVIGOR_JS="$DEVECO_HOME/tools/hvigor/bin/hvigorw.js"
+  SDK_DIR="$DEVECO_HOME/sdk"
+  export PATH="$JBR_BIN:$DEVECO_HOME/tools/node/bin:$PATH"
+  export DEVECO_SDK_HOME="$SDK_DIR"
+else
+  DEVECO_HOME="D:/DevEco Studio"
+  JBR_BIN="/d/DevEco Studio/jbr/bin"
+  NODE_EXE="$DEVECO_HOME/tools/node/node.exe"
+  HVIGOR_JS="$DEVECO_HOME/tools/hvigor/bin/hvigorw.js"
+  SDK_WIN="D:\\DevEco Studio\\sdk"
+  export PATH="$JBR_BIN:$PATH"
+  export DEVECO_SDK_HOME="$SDK_WIN"
 fi
 
-export PATH="$JBR_BIN:$PATH"
-export DEVECO_SDK_HOME="$SDK_WIN"
+if [ ! -f "$HVIGOR_JS" ]; then
+  echo "[!] 找不到 hvigorw.js，请确认 DevEco Studio 安装路径"
+  exit 1
+fi
 
 cd "$(dirname "$0")"
 
