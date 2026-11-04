@@ -11,7 +11,7 @@
 |------|------|------|
 | Phase 1 | MVP：文件总线 + daemon + 终端 | ✅ 完成（模拟器 + 真机双验证） |
 | Phase 2 | 首页快捷面板 | 🟡 完成约 70%（缺常亮/截图/电源模式/容器入口） |
-| Phase 3 | 应用管理 | ⬜ 未开始（Tab 仍是占位） |
+| Phase 3 | 应用管理与深度管控 | 🟡 设计就绪（功能规格与防唤醒方案确立） |
 | Phase 4 | 触控模拟 | ⬜ 未开始（Tab 仍是占位） |
 | Phase 5 | 系统信息 | ⬜ 未开始（Tab 仍是占位） |
 | Phase 6 | 打磨与引导 | ✅ 终端连接日志优化、HTML模式退役、文档重构整理 |
@@ -85,17 +85,69 @@
 
 ---
 
-## 四、Phase 3：应用管理（Tab 占位中）
+## 四、Phase 3：应用管理与深度管控（设计就绪 · 待实现）
 
-- [x] `ResponseParser.parseAppList` 已能正确解析 `bm dump -a`（真机 64 个）
-- [ ] 应用列表 UI：名称 + 包名 + 图标，支持搜索
-- [ ] 点击应用 → 详情面板（`bm dump -n` 解析：版本、UID、权限、Ability）
-- [ ] 操作：启动（需从 `bm dump -n` 里解析 mainAbility）/ 强停 / 清缓存 / 清数据
-- [ ] 危险操作二次确认（清数据 = 不可逆）
-- [ ] 按 UID/权限排序、只看第三方应用
+> **核心定位**：打破普通系统设置的黑盒限制，利用 UID 2000 提权实现「极速应用透视 + 极客真冻结（防唤醒）+ 预装免Root瘦身 + 深度清空 + 进程彻底灭杀」。
 
-**注意**：`aa start` 和 `aa force-stop` 都是**静默执行**（RC=0 无输出），
-UI 必须用「列表刷新 / `bm dump -n` 校验」来确认操作是否生效，不能只看 RC。
+### 1. 应用概览与极速清单（App List）
+- [ ] **150ms 极速全量应用列表获取**：
+      - 调用 `bm dump -a -l`，一次性提取全量应用的 `bundleName` 和中文 `label`。
+      - 本地缓存元数据，支持全量搜索（中文名称、拼音、包名模糊匹配）。
+- [ ] **多维分类筛选器**：
+      - `全部应用` / `用户已安装` / `可卸载系统预装` / `正在运行` / `冷宫冻结`。
+- [ ] **运行状态与资源指示**：
+      - 对齐 `ps -ef` 进程列表，在应用卡片上实时标明「运行中（绿色小圆点 + PID）」与内存估算。
+
+### 2. 极客“真·冻结”与冷宫防唤醒系统（Freeze & Anti-Wakeup）
+- [ ] **防唤醒核心机制（让其他程序找不到、唤不醒）**：
+      - **主方案（EDM 超级管理员模式 · 系统级封印）**：
+        1. App 内接入并声明 `EnterpriseAdminExtensionAbility`。
+        2. 提权 Daemon 执行 `edm enable-admin -n com.octahedron.hmpriv -a EnterpriseAdminAbility -t super` 激活系统级 Super Admin（Device Owner）。
+        3. 调用官方 `@ohos.enterprise.applicationManager.addPackagesToDisallowList` 将目标应用加入禁用名单。
+        4. **实测效果**：系统内核与 AbilityManager 底层全局拒绝任何 Want / URL Scheme / 隐式调用，图标隐藏或置灰，其他程序无法探测、无法拉起、无法唤醒，如同彻底从系统中消失！
+      - **副方案（Daemon 动态守卫反弹拦截）**：
+        1. 针对未开启 EDM 的设备，后台 Daemon 监听 Ability 启动事件或定时扫描。
+        2. 一旦冷宫名单中的应用被外部应用或系统服务拉起，100ms 内瞬间触发 `aa force-stop <bundleName>` 掐灭进程，切断对外响应。
+- [ ] **冷宫管理界面**：
+      - 一键添加/移出冷宫。
+      - 冻结状态与解冻状态无缝切换。
+
+### 3. 应用全息透视（上帝视角 Inspector）
+- [ ] **元数据全息提取**：
+      - 解析 `bm dump -n <bundleName>`：版本名、VersionCode、目标 API 级别（API 11/12/26）、签名类型（Debug/Release）、安装时间与数据目录。
+- [ ] **权限全景透视（杀手级特性）**：
+      - 突破系统限制，全量罗列该应用申请的所有权限（`reqPermissions`）与授权状态（`reqPermissionStates`）。
+      - 敏感权限高亮归类标签：位置信息、相机/录音、常驻后台、网络通信、剪贴板、文件访问等。
+- [ ] **Ability 清单与隐式启动**：
+      - 列出其声明的 UIAbility / ExtensionAbility，支持一键穿透启动特定 Ability。
+
+### 4. 深度控制与数据治理（Control & Clean）
+- [ ] **真·杀后台**：
+      - 调用 `aa force-stop <bundleName>`，彻底杀灭进程组及附属的 ServiceExtensionAbility，避免多任务上滑后的暗中自启。
+- [ ] **彻底清空数据（破除系统设置置灰限制）**：
+      - 调用 `bm clean -d -n <bundleName>`，直接擦除 `el1` 与 `el2` 下的私有数据库与键值存储，带二次确认防误触。
+- [ ] **清理应用缓存**：
+      - 调用 `bm clean -c -n <bundleName>`。
+- [ ] **一键重置权限**：
+      - 调用 `atm perm -r -b <bundleName>`，将应用的所有动态权限一键恢复到初始未授权状态。
+- [ ] **内存压力释放（TrimMemory）**：
+      - 调用 `aa send-memory-level <pid> 2`，模拟高内存压力强制应用回收非活跃缓存。
+
+### 5. 系统预装瘦身助手（Debloat Assistant）
+- [ ] **免 Root 识别与卸载预装应用**：
+      - 自动过滤出 `isRemovable: true` 的系统预装推广应用与运营商应用。
+      - 调用 `bm uninstall -n <bundleName> -u 100` 进行免 Root 卸载，释放存储空间。
+      - 支持 `-k` 参数（保留数据卸载）。
+- [ ] **核心组件防呆安全白名单**：
+      - 强制保护 `system_core` 级关键系统应用（设置、桌面、系统服务等），防止小白误操作导致设备故障。
+
+### 6. 电池与电源策略深度联动（Battery & Power）
+- [ ] **硬件级电池状态透视**：
+      - 结合系统底层原生接口与 `hidumper`，读取电池真实循环次数、真实健康度、实时充放电毫安电流、电池温度与电压。
+- [ ] **电源模式瞬切卡片**：
+      - 整合 `power-shell setmode 600`（正常）、`601`（省电）、`602`（超级省电），无需进设置多层菜单，一键瞬切。
+- [ ] **自动化省电联动**：
+      - 可选配置：锁屏自动切省电模式，亮屏或插电自动切正常模式。
 
 ---
 
