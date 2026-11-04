@@ -1,6 +1,20 @@
 {
   "app": {
-    "signingConfigs": [],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\cxdn\\.ohos\\config\\default_arkui-app_sTLmO50wFsx7Ln7JZtLq0MUpC1Vax0FwQwcj6XFtKOc=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001B7282360EA3ED02B3FC2AFE714020FB30291554C97C6312C0C6EDEE4004FBE9D7A71FBA87EC9FCE",
+          "profile": "C:\\Users\\cxdn\\.ohos\\config\\default_arkui-app_sTLmO50wFsx7Ln7JZtLq0MUpC1Vax0FwQwcj6XFtKOc=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\cxdn\\.ohos\\config\\default_arkui-app_sTLmO50wFsx7Ln7JZtLq0MUpC1Vax0FwQwcj6XFtKOc=.p12",
+          "storePassword": "0000001B1D3F91636579B36E480E2E9AE6339A46443270C0A27051CC6CCC5373FBC86ADB9FA565DB36022A"
+        }
+      }
+    ],
     "products": [
       {
         "name": "default",

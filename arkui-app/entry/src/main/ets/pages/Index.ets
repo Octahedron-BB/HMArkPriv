@@ -55,31 +55,33 @@ struct Index {
     BusDirManager.probeAllCandidates();
     const direct = BusDirManager.findAccessibleBusDir();
     if (direct) {
-      const ok = BusDirManager.ensureBusFiles();
-      this.busDirUri = direct;
-      this.busClient.setBusDir(direct);
-      this.needAuth = false;
-      this.permDenied = false;
-      this.refreshDaemonStatus();
-      if (!ok) {
-        this.lastResult = `总线目录可访问，但初始化总线文件失败：\n${direct}`;
-      }
-      return;
-    }
-
-    // 2. 申请权限后再探测
-    const hasPerm = await BusDirManager.hasDownloadPermission();
-    if (hasPerm) {
-      const dir = BusDirManager.findAccessibleBusDir();
-      if (dir) {
-        BusDirManager.ensureBusFiles();
-        this.busDirUri = dir;
-        this.busClient.setBusDir(dir);
+      // 关键：目录可访问 ≠ 文件可读。真机上 status.json 是 660 属主 file_manager，
+      // App 不在该组时会读失败，必须实测一次。
+      const readable = BusDirManager.canReadBus(direct);
+      if (readable) {
+        const ok = BusDirManager.ensureBusFiles();
+        this.busDirUri = direct;
+        this.busClient.setBusDir(direct);
         this.needAuth = false;
         this.permDenied = false;
         this.refreshDaemonStatus();
+        if (!ok) {
+          this.lastResult = `总线目录可读，但初始化总线文件失败：\n${direct}`;
+        }
         return;
       }
+      this.busDirUri = direct;
+      this.busClient.setBusDir(direct);
+      this.lastResult = `目录可访问但文件读不了：\n${direct}\n（需要授予媒体权限）`;
+    }
+
+    // 2. 已有权限则再试一次
+    const hasPerm = await BusDirManager.hasDownloadPermission();
+    if (hasPerm && this.busDirUri && BusDirManager.canReadBus(this.busDirUri)) {
+      this.needAuth = false;
+      this.permDenied = false;
+      this.refreshDaemonStatus();
+      return;
     }
 
     // 3. 之前 picker 存下来的 URI
@@ -104,52 +106,48 @@ struct Index {
   async authBusDir(): Promise<void> {
     const ctx = getContext(this) as common.UIAbilityContext;
 
+    // 第一步：申请媒体权限
     const granted = await BusDirManager.requestDownloadPermission(ctx);
-    if (granted) {
-      const dir = BusDirManager.findAccessibleBusDir();
-      if (dir) {
-        const ok = BusDirManager.ensureBusFiles();
-        this.busDirUri = dir;
-        this.busClient.setBusDir(dir);
-        this.needAuth = false;
-        this.permDenied = false;
-        this.lastResult = ok
-          ? `已授权并初始化总线目录：\n${dir}`
-          : `已获得权限，但初始化总线文件失败：\n${dir}`;
-        this.refreshDaemonStatus();
-        return;
-      }
-    }
 
-    // 权限拿不到 → 再探测一次（某些设备授权后立即可见）
-    const probe = BusDirManager.findAccessibleBusDir();
-    if (probe) {
-      BusDirManager.ensureBusFiles();
-      this.busDirUri = probe;
-      this.busClient.setBusDir(probe);
+    // 第二步：验证权限是否真的让总线可用（真机上媒体权限对普通文件无效）
+    const dir = BusDirManager.findAccessibleBusDir();
+    if (dir && BusDirManager.canReadBus(dir)) {
+      const ok = BusDirManager.ensureBusFilesIn(dir);
+      this.busDirUri = dir;
+      this.busClient.setBusDir(dir);
       this.needAuth = false;
       this.permDenied = false;
-      this.lastResult = `总线目录可用：\n${probe}`;
+      this.lastResult = ok ? `总线可用：\n${dir}` : `可读但初始化失败：\n${dir}`;
       this.refreshDaemonStatus();
       return;
     }
 
-    // 最后降级 picker
-    this.permDenied = true;
+    // 第三步：权限没用 → 降级到系统目录选择器
+    this.lastResult = `媒体权限${granted ? '已授予' : '被拒绝'}，但无法读写总线文件。\n` +
+      `正在打开目录选择器，请选中 Download/HMArkPriv`;
     const uri = await BusDirManager.pickBusDir(ctx);
-    if (uri) {
-      this.busDirUri = uri;
-      this.busClient.setBusDir(uri);
-      this.needAuth = !BusDirManager.isAccessible(uri);
-      this.lastResult = this.needAuth
-        ? `已选择目录但无法访问：\n${uri}`
-        : `总线目录已授权：\n${uri}`;
-      if (!this.needAuth) {
-        this.refreshDaemonStatus();
-      }
-    } else {
-      this.lastResult = '未获得目录访问权限。\n可在「设置 > 应用 > HMArkPriv > 权限」中手动开启「下载目录」。';
+    if (!uri) {
+      this.permDenied = true;
+      this.needAuth = true;
+      this.lastResult = '未选择目录。可在系统设置里手动授予权限后重试。';
+      return;
     }
+
+    // 第四步：在 picker 授权目录下初始化并验证
+    this.busDirUri = uri;
+    this.busClient.setBusDir(uri);
+    const ensured = BusDirManager.ensureBusFilesIn(uri);
+    const readable = BusDirManager.canReadBus(uri);
+    const writable = BusDirManager.canWriteBus(uri);
+    this.needAuth = !readable;
+    this.permDenied = false;
+    this.lastResult =
+      `选择器授权结果：\n${uri}\n\n` +
+      `建文件=${ensured} 可读=${readable} 可写=${writable}`;
+    if (readable) {
+      this.refreshDaemonStatus();
+    }
+    return;
   }
 
   async refreshDaemonStatus(): Promise<void> {

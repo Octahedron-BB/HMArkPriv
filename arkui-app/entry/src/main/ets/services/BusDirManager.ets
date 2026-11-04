@@ -27,8 +27,24 @@ const TAG = 'BusDirManager';
 const PREF_STORE = 'hmpriv_settings';
 const KEY_BUS_URI = 'busDirUri';
 
-/** 直接读写 Download 目录的权限 */
+/**
+ * 需要申请的全部权限。
+ *
+ * 【真机实测教训（2026-11-04）】
+ * 只有 READ_WRITE_DOWNLOAD_DIRECTORY 不够：该权限在真机上 requestPermissions 返回
+ * codes=[2]（无效请求），拿不到。真正生效的是 READ_MEDIA / WRITE_MEDIA —— 这两个
+ * 是 user_grant + normal 级，普通 App 可申请，用户点"允许"后即可访问 Download 下
+ * 本 App 有权访问的文件（媒体库代理，不受 unix 660 权限限制）。
+ */
+const PERMS: Permissions[] = [
+  'ohos.permission.READ_MEDIA',
+  'ohos.permission.WRITE_MEDIA',
+  'ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY',
+];
+
+/** 主权限（用于状态判断）：媒体读写是真正起作用的那组 */
 const PERM_DOWNLOAD: Permissions = 'ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY';
+const PERM_READ_MEDIA: Permissions = 'ohos.permission.READ_MEDIA';
 
 /**
  * 候选的 Download 总线目录绝对路径。
@@ -49,7 +65,10 @@ const CANDIDATE_DIRS: string[] = [
 export class BusDirManager {
   // ===== 权限相关 =====
 
-  /** 检查是否已授予 Download 目录读写权限 */
+  /**
+   * 检查媒体读写权限是否已授予。
+   * 真机上真正起作用的是 READ_MEDIA / WRITE_MEDIA，不是 READ_WRITE_DOWNLOAD_DIRECTORY。
+   */
   static async hasDownloadPermission(): Promise<boolean> {
     try {
       const atManager = abilityAccessCtrl.createAtManager();
@@ -57,10 +76,10 @@ export class BusDirManager {
         bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_APPLICATION
       );
       const tokenId: number = info.appInfo.accessTokenId;
-      const status = atManager.checkAccessTokenSync(tokenId, PERM_DOWNLOAD);
-      const granted = status === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED;
-      hilog.info(DOMAIN, TAG, `hasDownloadPermission: ${granted}`);
-      return granted;
+      const readOk = atManager.checkAccessTokenSync(tokenId, PERM_READ_MEDIA) ===
+        abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED;
+      hilog.info(DOMAIN, TAG, `hasDownloadPermission(READ_MEDIA): ${readOk}`);
+      return readOk;
     } catch (err) {
       const e = err as BusinessError;
       hilog.error(DOMAIN, TAG, `check permission failed: code=${e.code} msg=${e.message}`);
@@ -68,19 +87,32 @@ export class BusDirManager {
     }
   }
 
-  /** 弹出系统授权框请求 Download 目录读写权限 */
+  /**
+   * 申请全部所需权限（READ_MEDIA + WRITE_MEDIA + READ_WRITE_DOWNLOAD_DIRECTORY）。
+   * 逐个记录结果，只要 READ_MEDIA 授予就算成功。
+   */
   static async requestDownloadPermission(context: common.UIAbilityContext): Promise<boolean> {
     try {
       const atManager = abilityAccessCtrl.createAtManager();
-      const result = await atManager.requestPermissionsFromUser(context, [PERM_DOWNLOAD]);
+      const result = await atManager.requestPermissionsFromUser(context, PERMS);
       const codes: number[] = result.authResults;
+      const perms: string[] = result.permissions;
       const reasons: number[] = result.errorReasons ?? [];
-      const shown: boolean[] = result.dialogShownResults ?? [];
-      // 0=已授权 -1=未授权 2=无效请求；errorReasons: 2=未声明 5=不支持弹框 6=仅设置页授权
-      hilog.info(DOMAIN, TAG,
-        `requestDownloadPermission: codes=${JSON.stringify(codes)} ` +
-        `reasons=${JSON.stringify(reasons)} dialogShown=${JSON.stringify(shown)}`);
-      return codes.length > 0 && codes[0] === 0;
+      // 0=已授权 -1=未授权 2=无效请求；errorReasons: 2=未声明 5=不支持弹框 6=仅设置页
+      for (let i = 0; i < perms.length; i++) {
+        hilog.info(DOMAIN, TAG,
+          `perm[${i}] ${perms[i]} = ${codes[i]} (reason=${reasons[i] ?? '-'})`);
+      }
+      // 只要 READ_MEDIA 或 WRITE_MEDIA 有一个授予就算成功
+      let readOk = false;
+      for (let i = 0; i < perms.length; i++) {
+        if ((perms[i] === 'ohos.permission.READ_MEDIA' ||
+             perms[i] === 'ohos.permission.WRITE_MEDIA') && codes[i] === 0) {
+          readOk = true;
+        }
+      }
+      hilog.info(DOMAIN, TAG, `requestDownloadPermission => ${readOk}`);
+      return readOk;
     } catch (err) {
       const e = err as BusinessError;
       hilog.error(DOMAIN, TAG, `request permission failed: code=${e.code} msg=${e.message}`);
@@ -106,6 +138,51 @@ export class BusDirManager {
     return '';
   }
 
+  /**
+   * 测试能否真正读取总线文件（不只是目录可访问）。
+   *
+   * 【为什么需要】真机实测发现：目录 accessSync 返回 true（other 有 x 权限可遍历），
+   * 但 status.json 是 660 属主 file_manager，App 不在该组 → 读文件失败。
+   * 必须实际读一次才能判断总线是否真的可用。
+   */
+  static canReadBus(dir: string): boolean {
+    if (!dir) {
+      return false;
+    }
+    const candidates: string[] = [`${dir}/status.json`, `${dir}/cmd.res`];
+    for (const p of candidates) {
+      try {
+        const text = fileIo.readTextSync(p);
+        hilog.info(DOMAIN, TAG, `read ok: ${p} (${text.length} chars)`);
+        return true;
+      } catch (err) {
+        const e = err as BusinessError;
+        hilog.warn(DOMAIN, TAG, `read fail: ${p} code=${e.code} msg=${e.message}`);
+      }
+    }
+    return false;
+  }
+
+  /** 测试能否写入（写一个探针文件后删除） */
+  static canWriteBus(dir: string): boolean {
+    if (!dir) {
+      return false;
+    }
+    const probe = `${dir}/.write_probe`;
+    try {
+      const f = fileIo.openSync(probe, 0o2 | 0o100 | 0o1000);
+      fileIo.writeSync(f.fd, 'probe');
+      fileIo.closeSync(f);
+      fileIo.unlinkSync(probe);
+      hilog.info(DOMAIN, TAG, `write probe ok in ${dir}`);
+      return true;
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, TAG, `write probe fail: code=${e.code} msg=${e.message}`);
+      return false;
+    }
+  }
+
   /** 诊断用：逐个探测候选路径并打印结果（含父目录） */
   static probeAllCandidates(): void {
     for (const dir of CANDIDATE_DIRS) {
@@ -127,16 +204,13 @@ export class BusDirManager {
   }
 
   /**
-   * 确保总线目录和三个总线文件都存在。
-   * 目录不存在时尝试创建（App 视角路径通常有写权限）。
+   * 确保指定目录下的总线文件都存在。
+   * @param dir 目标目录（绝对路径或 picker 返回的 URI）
    */
-  static ensureBusFiles(): boolean {
-    const dir = BusDirManager.findAccessibleBusDir();
+  static ensureBusFilesIn(dir: string): boolean {
     if (!dir) {
-      hilog.warn(DOMAIN, TAG, 'ensureBusFiles: no accessible dir');
       return false;
     }
-
     // 目录可能还不存在，先尝试创建
     try {
       if (!fileIo.accessSync(dir)) {
@@ -149,22 +223,33 @@ export class BusDirManager {
     }
 
     const files: string[] = ['cmd.req', 'cmd.res', 'status.json'];
-    try {
-      for (const f of files) {
-        const p = `${dir}/${f}`;
+    for (const f of files) {
+      const p = `${dir}/${f}`;
+      try {
         if (!fileIo.accessSync(p)) {
-          // 文件不存在则创建空壳，daemon 只需 write 即可
           const file = fileIo.openSync(p, 0o2 | 0o100); // READ_WRITE | CREATE
           fileIo.closeSync(file);
           hilog.info(DOMAIN, TAG, `created bus file: ${p}`);
         }
+      } catch (err) {
+        const e = err as BusinessError;
+        hilog.error(DOMAIN, TAG, `create ${f} failed: code=${e.code} msg=${e.message}`);
+        return false;
       }
-      return true;
-    } catch (err) {
-      const e = err as BusinessError;
-      hilog.error(DOMAIN, TAG, `ensureBusFiles failed: code=${e.code} msg=${e.message}`);
+    }
+    return true;
+  }
+
+  /**
+   * 自动探测并初始化（沿用候选路径列表）。
+   */
+  static ensureBusFiles(): boolean {
+    const dir = BusDirManager.findAccessibleBusDir();
+    if (!dir) {
+      hilog.warn(DOMAIN, TAG, 'ensureBusFiles: no accessible dir');
       return false;
     }
+    return BusDirManager.ensureBusFilesIn(dir);
   }
 
   // ===== picker 降级方案 =====
