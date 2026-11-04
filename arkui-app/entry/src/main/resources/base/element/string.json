@@ -5,6 +5,7 @@
     { "name": "entry_label", "value": "HMArkPriv" },
     { "name": "perm_media_reason", "value": "访问 Download/HMArkPriv 目录下的文件总线（cmd.req/cmd.res/status.json），用于与 daemon 通信" },
     { "name": "perm_download_reason", "value": "直接读写 Download 目录下的 HMArkPriv 总线文件，与 daemon 交换命令和结果，无需每次手动选择文件夹" },
+    { "name": "perm_persist_reason", "value": "记住您授予的总线目录访问权限，避免每次启动 App 都要重新选择文件夹" },
     { "name": "tab_home", "value": "首页" },
     { "name": "tab_terminal", "value": "终端" },
     { "name": "tab_apps", "value": "应用" },

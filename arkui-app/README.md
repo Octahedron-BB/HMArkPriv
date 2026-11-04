@@ -54,15 +54,31 @@ hdc shell "sh /data/local/tmp/hmpriv/daemon.sh &"
 > **注意**：daemon.sh 必须是 LF 换行，Windows 上 checkout 的是 CRLF 会报 `syntax error`，
 > 推送前先 `tr -d '\r' < daemon.sh > daemon_lf.sh`。
 
-### 步骤 5：打开 App，无需任何授权
+### 步骤 5：打开 App 并授权（真机首次需要）
 
-直接打开 App 即可。它会自动：
+**模拟器**：直接打开即可。App 会自动探测 `/storage/Users/currentUser/Download/HMArkPriv`、
+创建缺失的总线文件、读取 status.json，顶部显示 `UID:2000`。
 
-1. 探测 `/storage/Users/currentUser/Download/HMArkPriv`（App 沙箱视图路径）
-2. 自动创建缺失的总线文件（cmd.req / cmd.res / status.json）
-3. 读取 status.json，顶部状态栏显示 **`UID:2000`** + 卡片显示 **「Daemon 在线」**
+**真机**：系统权限更严格，**首次需要手动授权一次**（之后永久记住）：
 
-> **不需要选文件夹、不需要点授权。** 详见「架构」一节的双视角路径说明。
+1. 打开 App，顶部出现黄色 **「需要授权下载目录」** 提示条
+2. 点 **「授权」**
+3. 在文件选择器中依次进入 **「我的手机 > Download」**，选中 **HMArkPriv** 文件夹，点确认
+4. 回到 App，状态变为 **`UID:2000` + 「Daemon 在线」**
+
+授权通过 `fileShare.persistPermission` 固化，**App 重启后自动激活**（启动 1ms 内连通），
+不需要每次重选。实测日志：
+
+```
+activatePermission ok: file://docs/storage/Users/currentUser/Download/HMArkPriv
+activate saved uri: true
+read ok: .../status.json (66 chars)
+daemon alive: pid=20270 uid=2000
+```
+
+> 真机上未授权时读总线文件会报 `13900001 Operation not permitted`
+> —— 因为总线文件是 `660` 属主 `file_manager`，App 不在该组。
+> picker 授权会给 App 该目录的访问凭证，从而突破这个限制。
 
 ### 步骤 6：验证
 

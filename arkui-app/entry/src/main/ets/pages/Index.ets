@@ -21,6 +21,7 @@ import { ResponseParser } from '../utils/ResponseParser';
 import { CommandResult } from '../model/CommandResult';
 import { DEFAULT_BUS_DIR } from '../common/Constants';
 import { common } from '@kit.AbilityKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 
 @Entry
 @Component
@@ -35,6 +36,8 @@ struct Index {
   @State busDirUri: string = '';
   @State needAuth: boolean = false;
   @State permDenied: boolean = false;
+  /** 正在初始化总线（UI 显示"连接中"，避免误显示为离线/未授权） */
+  @State connecting: boolean = true;
   private busClient: BusClient = new BusClient(DEFAULT_BUS_DIR);
 
   aboutToAppear(): void {
@@ -44,59 +47,76 @@ struct Index {
   /**
    * 初始化总线目录。
    *
-   * 优先级：
-   *   1. 直接探测：App 用沙箱视图路径 /storage/Users/currentUser/Download/HMArkPriv
-   *      通常无需额外授权即可读写（配合已声明的 READ_MEDIA / WRITE_MEDIA）
-   *   2. 申请 READ_WRITE_DOWNLOAD_DIRECTORY 权限后再探测
-   *   3. 以上都不行 → 降级到 picker 让用户选目录
+   * 真机上的实际行为（已实测）：
+   *   - 未授权时读总线文件报 13900001 Operation not permitted
+   *   - picker 授权后立即可读写，但**授权只对当前进程有效**
+   *   - 因此启动时必须先用 fileShare.activatePermission 重新激活持久化授权
+   *
+   * 流程：
+   *   1. 有持久化 URI → 激活它 → 验证可读 → 完成
+   *   2. 直接探测绝对路径（模拟器 / 某些设备可能本来就通）
+   *   3. 都不行 → 显示授权提示条，等用户点 picker
    */
   async initBusDir(): Promise<void> {
-    // 1. 直接探测（诊断日志 + 可能的直访）
-    BusDirManager.probeAllCandidates();
-    const direct = BusDirManager.findAccessibleBusDir();
-    if (direct) {
-      // 关键：目录可访问 ≠ 文件可读。真机上 status.json 是 660 属主 file_manager，
-      // App 不在该组时会读失败，必须实测一次。
-      const readable = BusDirManager.canReadBus(direct);
-      if (readable) {
-        const ok = BusDirManager.ensureBusFiles();
-        this.busDirUri = direct;
-        this.busClient.setBusDir(direct);
-        this.needAuth = false;
-        this.permDenied = false;
-        this.refreshDaemonStatus();
-        if (!ok) {
-          this.lastResult = `总线目录可读，但初始化总线文件失败：\n${direct}`;
-        }
-        return;
-      }
-      this.busDirUri = direct;
-      this.busClient.setBusDir(direct);
-      this.lastResult = `目录可访问但文件读不了：\n${direct}\n（需要授予媒体权限）`;
+    const ctx = getContext(this) as common.UIAbilityContext;
+    this.connecting = true;
+
+    // 1. 先尝试激活已持久化的 URI 授权（真机必需，否则重启后失效）
+    const saved = await BusDirManager.loadBusDir(ctx);
+    if (saved) {
+      const activated = await BusDirManager.activateBusUri(saved);
+      hilog.info(0x9201, 'Index', `activate saved uri: ${activated}`);
     }
 
-    // 2. 已有权限则再试一次
-    const hasPerm = await BusDirManager.hasDownloadPermission();
-    if (hasPerm && this.busDirUri && BusDirManager.canReadBus(this.busDirUri)) {
+    BusDirManager.probeAllCandidates();
+
+    // 2. 探测绝对路径是否可读。
+    // 【重要】activatePermission 之后权限生效可能有毫秒级延迟，
+    // 直接读一次容易失败。这里重试若干次，避免误判为"未授权"。
+    let dir = BusDirManager.findAccessibleBusDir();
+    let readable = false;
+    for (let i = 0; i < 5 && dir; i++) {
+      if (BusDirManager.canReadBus(dir)) {
+        readable = true;
+        break;
+      }
+      await new Promise<void>((r) => setTimeout(r, 120));
+    }
+
+    if (dir && readable) {
+      const ok = BusDirManager.ensureBusFilesIn(dir);
+      this.busDirUri = dir;
+      this.busClient.setBusDir(dir);
       this.needAuth = false;
       this.permDenied = false;
+      this.connecting = false;
       this.refreshDaemonStatus();
+      if (!ok) {
+        this.lastResult = `总线可读，但部分文件初始化失败：\n${dir}`;
+      }
       return;
     }
 
-    // 3. 之前 picker 存下来的 URI
-    const ctx = getContext(this) as common.UIAbilityContext;
-    const saved = await BusDirManager.loadBusDir(ctx);
-    if (saved && BusDirManager.isAccessible(saved)) {
+    // 3. 绝对路径不行，试持久化的 URI 本身
+    if (saved && BusDirManager.canReadBus(saved)) {
       this.busDirUri = saved;
       this.busClient.setBusDir(saved);
       this.needAuth = false;
+      this.permDenied = false;
+      this.connecting = false;
       this.refreshDaemonStatus();
       return;
+    }
+
+    // 4. 需要用户授权
+    if (dir) {
+      this.busDirUri = dir;
+      this.busClient.setBusDir(dir);
     }
 
     this.needAuth = true;
     this.daemonOnline = false;
+    this.connecting = false;
   }
 
   /**
@@ -109,8 +129,8 @@ struct Index {
     // 第一步：申请媒体权限
     const granted = await BusDirManager.requestDownloadPermission(ctx);
 
-    // 第二步：验证权限是否真的让总线可用（真机上媒体权限对普通文件无效）
-    const dir = BusDirManager.findAccessibleBusDir();
+    // 第二步：验证权限是否已让总线可用
+    let dir = BusDirManager.findAccessibleBusDir();
     if (dir && BusDirManager.canReadBus(dir)) {
       const ok = BusDirManager.ensureBusFilesIn(dir);
       this.busDirUri = dir;
@@ -122,43 +142,74 @@ struct Index {
       return;
     }
 
-    // 第三步：权限没用 → 降级到系统目录选择器
-    this.lastResult = `媒体权限${granted ? '已授予' : '被拒绝'}，但无法读写总线文件。\n` +
-      `正在打开目录选择器，请选中 Download/HMArkPriv`;
+    // 第三步：降级到系统目录选择器。
+    // 【重要】picker 返回的是 URI（file://docs/...），不能拿它直接拼子文件路径
+    // （实测报 13900002 No such file or directory）。picker 的作用是给 App 授予
+    // 该目录的"访问许可"，授权后应当重新探测**绝对路径**来使用。
+    this.lastResult = `媒体权限${granted ? '已授予' : '未授予'}，需要选择总线目录。\n` +
+      `请在文件选择器中依次进入「我的手机 > Download」，选中 HMArkPriv 后确认。`;
     const uri = await BusDirManager.pickBusDir(ctx);
     if (!uri) {
       this.permDenied = true;
       this.needAuth = true;
-      this.lastResult = '未选择目录。可在系统设置里手动授予权限后重试。';
+      this.lastResult = '未选择目录。可重试，或在系统设置中授予「文件」访问权限。';
       return;
     }
 
-    // 第四步：在 picker 授权目录下初始化并验证
-    this.busDirUri = uri;
-    this.busClient.setBusDir(uri);
-    const ensured = BusDirManager.ensureBusFilesIn(uri);
-    const readable = BusDirManager.canReadBus(uri);
-    const writable = BusDirManager.canWriteBus(uri);
-    this.needAuth = !readable;
+    // 第四步：授权已生效，重新探测绝对路径（关键：不用 URI）
+    dir = BusDirManager.findAccessibleBusDir();
+    const readable = dir ? BusDirManager.canReadBus(dir) : false;
+
+    if (dir && readable) {
+      const ensured = BusDirManager.ensureBusFilesIn(dir);
+      this.busDirUri = dir;
+      this.busClient.setBusDir(dir);
+      this.needAuth = false;
+      this.permDenied = false;
+      this.lastResult = `授权成功，总线可用：\n${dir}` +
+        (ensured ? '' : '\n（注意：部分总线文件创建失败）');
+      this.refreshDaemonStatus();
+      return;
+    }
+
+    // 第五步：绝对路径仍不可用，最后尝试直接用 URI 访问
+    const uriReadable = BusDirManager.canReadBus(uri);
+    if (uriReadable) {
+      this.busDirUri = uri;
+      this.busClient.setBusDir(uri);
+      this.needAuth = false;
+      this.permDenied = false;
+      this.lastResult = `授权成功（URI 模式）：\n${uri}`;
+      this.refreshDaemonStatus();
+      return;
+    }
+
+    this.needAuth = true;
     this.permDenied = false;
     this.lastResult =
-      `选择器授权结果：\n${uri}\n\n` +
-      `建文件=${ensured} 可读=${readable} 可写=${writable}`;
-    if (readable) {
-      this.refreshDaemonStatus();
-    }
-    return;
+      `已选择：\n${uri}\n\n但总线文件仍不可读。\n` +
+      `请确认选中的是 HMArkPriv 文件夹本身（不是 Download），并确保 daemon 已部署。`;
   }
 
+  /**
+   * 刷新 daemon 状态。
+   *
+   * 自愈逻辑：即使当前标记为 needAuth，也尝试检测一次 ——
+   * 若这次读通了（说明授权在后台已生效），自动清除 needAuth。
+   * 这样可以避免"授权后仍卡在未授权"的状态。
+   */
   async refreshDaemonStatus(): Promise<void> {
-    if (this.needAuth) {
-      return;
-    }
     const status = await this.busClient.checkDaemonStatus();
     this.daemonOnline = status !== null;
     if (status) {
       this.daemonPid = status.pid;
       this.daemonUid = status.uid;
+      // 检测成功说明总线通了，清掉未授权标记
+      if (this.needAuth) {
+        hilog.info(0x9201, 'Index', 'daemon reachable, clearing needAuth');
+        this.needAuth = false;
+        this.permDenied = false;
+      }
     }
   }
 
@@ -272,10 +323,13 @@ struct Index {
         // Daemon 状态指示
         Row() {
           Circle({ width: 8, height: 8 })
-            .fill(this.daemonOnline ? '#4ADE80' : '#F87171')
-          Text(this.needAuth ? '未授权' : (this.daemonOnline ? `UID:${this.daemonUid}` : 'OFFLINE'))
+            .fill(this.connecting ? '#FBBF24'
+              : (this.daemonOnline ? '#4ADE80' : (this.needAuth ? '#FBBF24' : '#F87171')))
+          Text(this.connecting ? '连接中'
+            : (this.daemonOnline ? `UID:${this.daemonUid}` : (this.needAuth ? '未授权' : 'OFFLINE')))
             .fontSize(11)
-            .fontColor(this.needAuth ? '#FBBF24' : (this.daemonOnline ? '#94A3B8' : '#F87171'))
+            .fontColor(this.connecting ? '#FBBF24'
+              : (this.daemonOnline ? '#94A3B8' : (this.needAuth ? '#FBBF24' : '#F87171')))
             .margin({ left: 4 })
         }
         .onClick(() => this.refreshDaemonStatus())
@@ -389,10 +443,11 @@ struct Index {
 
           Text('① 电脑部署 daemon（一次性）\n' +
                '   hdc file send core/daemon.sh /data/local/tmp/hmpriv/daemon.sh\n' +
-               '   hdc shell "sh /data/local/tmp/hmpriv/daemon.sh &"\n\n' +
-               '② 回到本 App，点顶部「授权」\n' +
-               '   允许访问「下载」目录即可，无需手动选文件夹\n' +
-               '   App 会自动创建 Download/HMArkPriv 总线文件\n\n' +
+               '   hdc shell "nohup sh /data/local/tmp/hmpriv/daemon.sh >/dev/null 2>&1 &"\n\n' +
+               '② 首次使用：点顶部「授权」\n' +
+               '   在文件选择器里进入「我的手机 > Download」，\n' +
+               '   选中 HMArkPriv 文件夹并确认\n' +
+               '   （授权会被记住，之后启动自动连接，无需再选）\n\n' +
                '③ 切到「终端」Tab，输入 id 验证\n' +
                '   应返回 uid=2000(shell)')
             .fontSize(11)

@@ -16,7 +16,7 @@
  */
 
 import { abilityAccessCtrl, bundleManager, common, Permissions } from '@kit.AbilityKit';
-import { picker } from '@kit.CoreFileKit';
+import { picker, fileShare } from '@kit.CoreFileKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { preferences } from '@kit.ArkData';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -275,6 +275,11 @@ export class BusDirManager {
 
       const uri = uris[0];
       hilog.info(DOMAIN, TAG, `picked bus dir: ${uri}`);
+
+      // 先固化授权（持久化），再存到 preferences
+      const persisted = await BusDirManager.persistBusUri(uri);
+      hilog.info(DOMAIN, TAG, `persist result: ${persisted}`);
+
       await BusDirManager.saveBusDir(context, uri);
       return uri;
     } catch (err) {
@@ -304,6 +309,76 @@ export class BusDirManager {
       hilog.info(DOMAIN, TAG, `bus dir saved: ${uri}`);
     } catch (err) {
       hilog.error(DOMAIN, TAG, `saveBusDir failed: ${err}`);
+    }
+  }
+
+  // ===== URI 授权持久化 =====
+  //
+  // 【为什么需要】
+  // picker 返回的 URI 授权是**临时的**，只在当前 App 进程有效。
+  // 实测：App 重启后立刻变回 13900001 Operation not permitted，
+  // 用户必须每次重新选目录。
+  //
+  // fileShare.persistPermission 可以把 URI 授权固化下来，
+  // 之后每次启动调 activatePermission 重新激活即可。
+  // 该 API 需要 ohos.permission.FILE_ACCESS_PERSIST（system_grant + normal，声明即得）。
+
+  /** 把 picker 拿到的 URI 授权持久化 */
+  static async persistBusUri(uri: string): Promise<boolean> {
+    if (!uri || !uri.startsWith('file://')) {
+      hilog.warn(DOMAIN, TAG, `persistBusUri: not a file uri: ${uri}`);
+      return false;
+    }
+    try {
+      const policy: fileShare.PolicyInfo = {
+        uri: uri,
+        operationMode: fileShare.OperationMode.READ_MODE | fileShare.OperationMode.WRITE_MODE,
+      };
+      await fileShare.persistPermission([policy]);
+      hilog.info(DOMAIN, TAG, `persistPermission ok: ${uri}`);
+      return true;
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.error(DOMAIN, TAG, `persistPermission failed: code=${e.code} msg=${e.message}`);
+      return false;
+    }
+  }
+
+  /** 重新激活已持久化的 URI 授权（每次启动调用） */
+  static async activateBusUri(uri: string): Promise<boolean> {
+    if (!uri || !uri.startsWith('file://')) {
+      return false;
+    }
+    try {
+      const policy: fileShare.PolicyInfo = {
+        uri: uri,
+        operationMode: fileShare.OperationMode.READ_MODE | fileShare.OperationMode.WRITE_MODE,
+      };
+      await fileShare.activatePermission([policy]);
+      hilog.info(DOMAIN, TAG, `activatePermission ok: ${uri}`);
+      return true;
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, TAG, `activatePermission failed: code=${e.code} msg=${e.message}`);
+      return false;
+    }
+  }
+
+  /** 撤销持久化授权 */
+  static async revokeBusUri(uri: string): Promise<void> {
+    if (!uri || !uri.startsWith('file://')) {
+      return;
+    }
+    try {
+      const policy: fileShare.PolicyInfo = {
+        uri: uri,
+        operationMode: fileShare.OperationMode.READ_MODE | fileShare.OperationMode.WRITE_MODE,
+      };
+      await fileShare.revokePermission([policy]);
+      hilog.info(DOMAIN, TAG, `revokePermission ok: ${uri}`);
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, TAG, `revokePermission failed: code=${e.code} msg=${e.message}`);
     }
   }
 
