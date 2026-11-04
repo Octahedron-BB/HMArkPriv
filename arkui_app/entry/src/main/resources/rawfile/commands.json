@@ -1737,8 +1737,16 @@
           "name": "11.3 获取容器内应用的包名 + Activity 名",
           "items": [
             {
-              "cmd": "uitest dumpLayout -p /data/local/tmp/d.json >/dev/null 2>&1; grep -oE '\"bundleName\":\"[^\"]+\"|\"abilityName\":\"[^\"]+\"' /data/local/tmp/d.json | grep -v 'sceneboard' | sort -u",
-              "desc": "一键抓取前台应用的包名与Activity"
+              "cmd": "hilog -x 2>/dev/null | grep -oE '[A-Za-z0-9_.$]+/[A-Za-z0-9_.]+/entry/0' | sort -u | sed 's|/entry/0||' | sed 's|\\(.*\\)/\\(.*\\)|aa start -b \\2 -a \\1|'",
+              "desc": "一键列出近期容器应用并生成启动指令(免切前台)"
+            },
+            {
+              "cmd": "hilog -x 2>/dev/null | grep -oE '[A-Za-z0-9_.$]+/[A-Za-z0-9_.]+/entry/0' | sort -u | sed 's|/entry/0||' | sed 's|\\(.*\\)/\\(.*\\)|\\2 : \\1|'",
+              "desc": "查看近期容器应用 包名:Activity 映射表"
+            },
+            {
+              "cmd": "sleep 3 && uitest dumpLayout -p /data/local/tmp/d.json >/dev/null 2>&1 && grep -oE '\"bundleName\":\"[^\"]+\"|\"abilityName\":\"[^\"]+\"' /data/local/tmp/d.json | grep -v 'sceneboard' | sort -u",
+              "desc": "延时3秒抓取前台屏幕应用包名与Activity"
             },
             {
               "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$ManageApplicationsActivity\"",
@@ -1747,14 +1755,6 @@
             {
               "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$NotificationAccessSettingsActivity\"",
               "desc": "打开容器通知使用权设置"
-            },
-            {
-              "cmd": "gzip -dc /data/log/hilog/hilog.*.gz 2>/dev/null | grep -oE 'StartAbility [A-Za-z0-9_.]+/[A-Za-z0-9_.$]+' | sort -u",
-              "desc": "检索历史启动记录(包名/Activity对)"
-            },
-            {
-              "cmd": "hilog -x 2>/dev/null | grep -oE 'StartAbility [A-Za-z0-9_.]+/[A-Za-z0-9_.$]+' | sort -u",
-              "desc": "检索当前日志缓冲中的启动记录"
             }
           ]
         }

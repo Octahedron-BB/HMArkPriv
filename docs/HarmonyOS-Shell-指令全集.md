@@ -990,35 +990,54 @@ aa start -b com.easy.hmos.abroad -a EntryAbility                      # 拉起�
 >
 > 容器内的安卓应用没有在宿主鸿蒙系统的包管理系统（`bm`）中注册，因此无法使用隐式启动，也不支持只传 `-b`（会报 `10103101 Failed to find a matching application for implicit launch`）。
 >
-> 以下提供四种从最简单到最彻底的获取方法，按推荐度排序：
+> 以下提供经过实机压测的最佳获取方案：
 
-#### 方法 A：一键抓取前台应用（最推荐，手机/终端直接执行）
+#### 方法 A：一键列出所有近期运行的容器应用（⭐ 最推荐：免切前台、0.2秒秒出）
 
-将卓易通/出境易中的目标安卓应用打开在前台，然后直接执行下方单行命令。
-命令通过控件树提取当前前台窗口的 `bundleName` 与 `abilityName`，**包名与 Activity 名一次性全部拿全**，无需清空日志或繁琐复现：
+**原理**：鸿蒙桌面与多任务管理器（SceneBoard）在内存日志中完整记录了多任务栈中的应用标识。直接读取实时内存缓冲并格式化，**无需把应用切到前台**，在 HMArkPriv 内直接点击即可：
 
 ```bash
-uitest dumpLayout -p /data/local/tmp/d.json >/dev/null 2>&1; grep -oE '"bundleName":"[^"]+"|"abilityName":"[^"]+"' /data/local/tmp/d.json | grep -v 'sceneboard' | sort -u
+# 直接生成标准的 aa start 启动指令列表
+hilog -x 2>/dev/null | grep -oE '[A-Za-z0-9_.$]+/[A-Za-z0-9_.]+/entry/0' | sort -u | sed 's|/entry/0||' | sed 's|\(.*\)/\(.*\)|aa start -b \2 -a \1|'
 ```
 
-**实测输出示例**（以 KDE Connect 为例）：
+**实测输出（毫秒级返回，直接复制可用）**：
+
+```
+aa start -b com.aistra.hail -a com.aistra.hail.ui.main.MainActivity
+aa start -b com.android.settings -a com.android.settings.Settings$ManageApplicationsActivity
+aa start -b com.android.settings -a com.android.settings.Settings$NotificationAccessSettingsActivity
+aa start -b com.easy.abroad -a com.easy.abroad.activities.MainActivity
+aa start -b org.kde.kdeconnect_tp -a org.kde.kdeconnect.UserInterface.MainActivity
+```
+
+如果只想看清晰的 `包名 : Activity` 映射表：
+
+```bash
+hilog -x 2>/dev/null | grep -oE '[A-Za-z0-9_.$]+/[A-Za-z0-9_.]+/entry/0' | sort -u | sed 's|/entry/0||' | sed 's|\(.*\)/\(.*\)|\2 : \1|'
+```
+
+---
+
+#### 方法 B：延时 3 秒精准抓取当前屏幕应用（解决前台切换问题）
+
+如果刚打开了一个新应用，想直接抓取当前屏幕前台窗口的参数：
+在 HMArkPriv 中点击执行后，**有 3 秒倒计时**供你从容切到底部的目标应用，3 秒后脚本自动读取屏幕控件树中的 `bundleName` 与 `abilityName`：
+
+```bash
+sleep 3 && uitest dumpLayout -p /data/local/tmp/d.json >/dev/null 2>&1 && grep -oE '"bundleName":"[^"]+"|"abilityName":"[^"]+"' /data/local/tmp/d.json | grep -v 'sceneboard' | sort -u
+```
+
+**实测输出示例**：
 
 ```
 "abilityName":"org.kde.kdeconnect.UserInterface.MainActivity"
 "bundleName":"org.kde.kdeconnect_tp"
 ```
 
-拿到的结果直接填入启动命令：
-```bash
-aa start -b org.kde.kdeconnect_tp -a org.kde.kdeconnect.UserInterface.MainActivity
-```
+---
 
-> **优势说明**：
-> 1. 无需关注日志缓冲是否被冲掉，只要界面停留在目标应用，任何时候执行都能秒出结果。
-> 2. 自动过滤桌面图层 `com.ohos.sceneboard`，只保留目标应用真实参数。
-> 3. 输出路径使用 `/data/local/tmp/`，确保 shell 具有完整的写入权限。
-
-#### 方法 B：直达容器内设置与权限界面（零命令排查应用）
+#### 方法 C：直达容器内设置与权限界面（零命令排查应用）
 
 如果只是想看容器内安装了哪些应用，或者要给某个应用（如短信转发器、KDE Connect）授予**通知使用权**、悬浮窗或后台权限，无需记忆包名，直接拉起容器内置的 Android 原生管理页：
 
@@ -1026,51 +1045,31 @@ aa start -b org.kde.kdeconnect_tp -a org.kde.kdeconnect.UserInterface.MainActivi
 # 1. 打开容器内应用管理列表（查看所有已装应用、存储占用、版本、强停与卸载）
 aa start -b com.android.settings -a "com.android.settings.Settings\$ManageApplicationsActivity"
 
-# 2. 打开容器内“通知使用权”授权页（直接点进列表勾选短信转发器/KDE Connect）
+# 2. 打开容器内“通知使用权”授权页（直接在列表勾选短信转发器/KDE Connect）
 aa start -b com.android.settings -a "com.android.settings.Settings\$NotificationAccessSettingsActivity"
 
 # 3. 打开容器内特殊访问权限设置总览
 aa start -b com.android.settings -a "com.android.settings.Settings\$SpecialAccessSettingsActivity"
 ```
 
-#### 方法 C：电脑端 HDC 查任务栈（成对完整列表）
+---
 
-当手机连接电脑调试时，在电脑终端直接执行 `aa dump -l`。该命令会直接列出系统最近运行的所有任务栈信息，容器内运行过的所有应用都会以 `#[#<包名>:entry:<Activity名>]` 成对格式展示：
+#### 方法 D：电脑端 HDC 查任务栈（完整列表）
+
+手机连接电脑时，电脑终端直接执行 `aa dump -l` 即可查看所有近期任务栈：
 
 ```bash
 hdc shell "aa dump -l"
 ```
 
-**实测输出片段**：
-
+**输出中的 mission name 片段**：
 ```
 Mission ID #954  mission name #[#org.kde.kdeconnect_tp:entry:org.kde.kdeconnect.UserInterface.MainActivity]
 Mission ID #979  mission name #[#com.aistra.hail:entry:com.aistra.hail.ui.main.MainActivity]
-Mission ID #966  mission name #[#com.easy.abroad:entry:com.easy.abroad.activities.MainActivity]
 ```
 
-> **注意**：由于 HarmonyOS 7.0 Binder IPC 管道重定向限制，`aa dump -l` 仅支持在 HDC 终端直接显示；若在手机本地通过 Shell 脚本重定向或管道抓取会被系统置空。因此在手机端 App 内推荐使用**方法 A**。
-
-#### 方法 D：从历史启动日志检索候选池（免重复操作）
-
-无需提前执行 `hilog -r` 清空日志，直接在已有的落盘压缩日志或当前缓冲中全局检索最近启动过的记录：
-
-```bash
-# 从落盘历史日志中搜索（覆盖过去几十分钟内启动过的所有应用）
-gzip -dc /data/log/hilog/hilog.*.gz 2>/dev/null | grep -oE 'StartAbility [A-Za-z0-9_.]+/[A-Za-z0-9_.$]+' | sort -u
-
-# 从当前实时日志缓冲中搜索
-hilog -x 2>/dev/null | grep -oE 'StartAbility [A-Za-z0-9_.]+/[A-Za-z0-9_.$]+' | sort -u
-```
-
-**实测输出示例**：
-
-```
-StartAbility com.aistra.hail/com.aistra.hail.ui.main.MainActivity
-StartAbility org.kde.kdeconnect_tp/org.kde.kdeconnect.UserInterface.MainActivity
-```
-
-斜杠前半段为 `-b` 包名，后半段为 `-a` Activity 名。
+> **踩坑记录：为什么全量搜 gzip 日志会超时？**
+> 系统日志目录 `/data/log/hilog/` 中累积了 600 多个 gz 压缩包（近 500MB），`gzip -dc /data/log/hilog/hilog.*.gz` 尝试全部解压并正则扫描数 GB 的文本，手机 CPU 耗时超过了后台守护进程的 20 秒安全超时限制，因此会被自动终止。使用方法 A 读取内存中的实时缓冲（`hilog -x`）仅需 0.2 秒且覆盖所有近期多任务，完全无需解压历史文件。
 
 ---
 
