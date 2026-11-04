@@ -832,14 +832,33 @@ hdc tconn 127.0.0.1:5556
 > `rgm_hmos` / `isulad` 管理的轻量级容器（ANCO 架构）中，有独立网络命名空间与进程树。
 > 鸿蒙宿主的 `aa start -b com.android.settings` 能把启动请求路由到容器内的安卓 Settings。
 >
-> **验证结果（4 条中仅 1 条可用）**：
+> **验证结果（4 条中 2 条可用，1 条被系统拦截，1 条不确定）**：
 >
 > | Activity | 结果 | 说明 |
 > |----------|------|------|
-> | `NotificationAccessSettingsActivity` | ✅ **可用** | 界面确实跳到容器内「通知使用权」页，列出容器内应用（短信转发器/万步健康/KDE Connect/MacroDroid 等），可重复打开 |
-> | `AccessibilitySettingsActivity` | ❌ 不可用 | aa 返回 RC=0（静默），但界面退回桌面 —— Activity 在卓易通 Settings 里不存在 |
-> | `SpecialAccessSettingsActivity` | ❌ 不可用 | 同上 |
-> | `ManageApplicationsActivity` | ❌ 不可用 | 同上 |
+> | `NotificationAccessSettingsActivity` | ✅ **可用** | 跳到容器内「通知使用权」页，列出容器内应用（短信转发器/万步健康/KDE Connect/MacroDroid 等），可重复打开 |
+> | `SpecialAccessSettingsActivity` | ✅ **可用** | 跳到「特殊访问权限」页，列出「显示在其他应用的上层 / 媒体管理应用 / 修改系统设置 / 通知使用权 / 闹钟和提醒 / 使用情况访问权限 / WLAN 控制」 |
+> | `AccessibilitySettingsActivity` | ⚠️ **被系统拦截** | 页面**能启动也会渲染**（WMS 日志有完整的 scaleX 0.035→1 创建记录），但渲染后立刻被关闭，用户会看到"为了隐私安全，不允许…"的提示 |
+> | `ManageApplicationsActivity` | ❓ 待确认 | 多次测试均退回桌面，但用户反馈曾成功跳出。可能依赖特定系统版本或前置状态 |
+>
+> **关于无障碍被拦截的机制**（实测日志）：
+> ```
+> 16:01:10.354  WMS  scaleX from 0.035 to 1           ← 页面开始渲染
+> 16:01:10.356  WMS  enableShow change from true to false  ← 立刻被隐藏
+> 16:01:10.359  WMS  aboutToDisappear                  ← 页面销毁
+> ```
+> **不是"没有这个功能"，而是系统安全策略主动拦截**。
+> 无障碍权限能完全控制设备（模拟任意操作、读取屏幕内容），
+> 所以鸿蒙禁止通过 `aa start` 这种程序化方式打开它的设置页，必须用户手动进设置。
+> 这是设计上的安全边界，无法绕过。
+>
+> **验证技巧**：判断是否真的跳转成功，不能只看 `aa start` 的 RC（永远是 0）。
+> 正确做法是启动后等 5-6 秒，再 `uitest dumpLayout` 看：
+>   - `bundleName` 是否为 `com.android.settings`
+>   - 界面文本里是否出现预期标题（如「特殊访问权限」）
+>
+> 早期我用 3-4 秒的等待时间判断，导致把 `SpecialAccessSettingsActivity` 误判为不可用 ——
+> 容器内 Activity 启动较慢，需要更长的等待。
 >
 > **关键：`$` 转义（不转义必定失败）**
 >

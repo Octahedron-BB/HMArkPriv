@@ -16,6 +16,9 @@ import { BusDirManager } from '../services/BusDirManager';
 import { BatteryReader } from '../services/BatteryReader';
 import { TerminalConsole } from '../components/TerminalConsole';
 import { DaemonStatusCard } from '../components/DaemonStatusCard';
+import { OpenApiTab } from '../components/OpenApiTab';
+import { CrossAppHandler, PendingCall } from '../services/CrossAppHandler';
+import { TrustManager } from '../services/TrustManager';
 import { CommandBuilder } from '../utils/CommandBuilder';
 import { ResponseParser } from '../utils/ResponseParser';
 import { CommandResult } from '../model/CommandResult';
@@ -38,9 +41,21 @@ struct Index {
   @State permDenied: boolean = false;
   /** 正在初始化总线（UI 显示"连接中"，避免误显示为离线/未授权） */
   @State connecting: boolean = true;
+  /** 是否有待确认的外部调用（用基础类型，ArkTS 对 nullable 对象的状态追踪不可靠） */
+  @State hasPending: boolean = false;
+  /** 待确认请求的调用方 */
+  @State pendingCaller: string = '';
+  /** 待确认请求的命令 */
+  @State pendingCmd: string = '';
   private busClient: BusClient = new BusClient(DEFAULT_BUS_DIR);
 
   aboutToAppear(): void {
+    // 注册外部调用监听：有外部 App 请求时会拉起确认卡片
+    CrossAppHandler.setListener(() => {
+      this.syncPending();
+    });
+    // 兜底：如果监听注册前就已有 pending，主动读一次
+    this.syncPending();
     this.initBusDir();
   }
 
@@ -57,6 +72,21 @@ struct Index {
    *   2. 直接探测绝对路径（模拟器 / 某些设备可能本来就通）
    *   3. 都不行 → 显示授权提示条，等用户点 picker
    */
+  /** 同步待确认状态到 UI（用基础类型，确保 ArkUI 能感知变化） */
+  syncPending(): void {
+    const p = CrossAppHandler.getPending();
+    if (p) {
+      hilog.info(0x9201, 'Index', `syncPending: ${p.caller} -> ${p.cmd}`);
+      this.pendingCaller = p.caller;
+      this.pendingCmd = p.cmd;
+      this.hasPending = true;
+    } else {
+      this.hasPending = false;
+      this.pendingCaller = '';
+      this.pendingCmd = '';
+    }
+  }
+
   async initBusDir(): Promise<void> {
     const ctx = getContext(this) as common.UIAbilityContext;
     this.connecting = true;
@@ -310,6 +340,20 @@ struct Index {
   }
 
   build() {
+    Stack({ alignContent: Alignment.Center }) {
+      this.MainContent()
+
+      // ===== 外部调用确认卡片（覆盖层）=====
+      if (this.hasPending) {
+        this.ConfirmCard()
+      }
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  MainContent() {
     Column() {
       // 顶部标题栏
       Row() {
@@ -389,11 +433,11 @@ struct Index {
         }
         .tabBar(this.TabItem('应用', 2))
 
-        // Tab 4: 触控模拟（Phase 4 占位）
+        // Tab 4: 开放接口（跨应用调用白名单管理）
         TabContent() {
-          this.PlaceholderTab('触控模拟', 'Phase 4 开发中')
+          OpenApiTab({ busClient: this.busClient })
         }
-        .tabBar(this.TabItem('触控', 3))
+        .tabBar(this.TabItem('开放', 3))
 
         // Tab 5: 系统信息（Phase 5 占位）
         TabContent() {
@@ -549,6 +593,127 @@ struct Index {
     .width('100%')
     .height('100%')
     .padding(12)
+  }
+
+
+  /**
+   * 外部调用确认卡片。
+   *
+   * 设计要点：
+   *   - 遮罩层挡住整个界面，防止用户误点其他地方
+   *   - 明确显示「谁」在调用、「要执行什么命令」
+   *   - 三个选项：仅本次允许 / 加入白名单并允许 / 拒绝
+   *   - 拒绝时可选「不再询问」= 加入黑名单
+   */
+  @Builder
+  ConfirmCard() {
+    // 半透明遮罩
+    Column()
+      .width('100%')
+      .height('100%')
+      .backgroundColor('#CC000000')
+
+    Column() {
+      // 标题
+      Row() {
+        Text('🔐')
+          .fontSize(20)
+          .margin({ right: 8 })
+        Text('外部应用请求执行命令')
+          .fontSize(15)
+          .fontColor('#E2E8F0')
+          .fontWeight(FontWeight.Bold)
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .margin({ bottom: 12 })
+
+      // 调用方
+      Text('调用方')
+        .fontSize(11)
+        .fontColor('#64748B')
+        .width('100%')
+      Text(this.pendingCaller)
+        .fontSize(13)
+        .fontColor('#82B1FF')
+        .fontFamily('JetBrains Mono, Consolas, monospace')
+        .width('100%')
+        .margin({ top: 2, bottom: 12 })
+
+      // 命令
+      Text('要执行的命令')
+        .fontSize(11)
+        .fontColor('#64748B')
+        .width('100%')
+      Text(this.pendingCmd)
+        .fontSize(13)
+        .fontColor('#C3E88D')
+        .fontFamily('JetBrains Mono, Consolas, monospace')
+        .width('100%')
+        .padding(10)
+        .backgroundColor('#0D1527')
+        .borderRadius(6)
+        .margin({ top: 4, bottom: 12 })
+
+      // 风险提示
+      Text('该命令将以 shell（UID 2000）权限执行，可能读写文件、模拟输入或修改系统设置。')
+        .fontSize(11)
+        .fontColor('#FBBF24')
+        .lineHeight(16)
+        .width('100%')
+        .margin({ bottom: 16 })
+
+      // 按钮组
+      Column() {
+        // 主要操作：本次允许
+        Button('允许执行（仅本次）')
+          .width('100%')
+          .fontSize(13)
+          .height(40)
+          .backgroundColor('#38BDF8')
+          .fontColor('#090D16')
+          .margin({ bottom: 8 })
+          .onClick(async () => {
+            this.hasPending = false;
+            await CrossAppHandler.approve();
+          })
+
+        // 加入白名单并允许
+        Button('信任该应用，以后免确认')
+          .width('100%')
+          .fontSize(13)
+          .height(40)
+          .backgroundColor('#1E293B')
+          .fontColor('#4ADE80')
+          .margin({ bottom: 8 })
+          .onClick(async () => {
+            const ctx = getContext(this) as common.UIAbilityContext;
+            const caller = this.pendingCaller;
+            this.hasPending = false;
+            // 先加白名单，再执行
+            await TrustManager.addTrusted(ctx, caller);
+            await CrossAppHandler.approve();
+          })
+
+        // 拒绝
+        Button('拒绝')
+          .width('100%')
+          .fontSize(13)
+          .height(40)
+          .backgroundColor('#2A1515')
+          .fontColor('#F87171')
+          .onClick(async () => {
+            this.hasPending = false;
+            await CrossAppHandler.deny(false);
+          })
+      }
+      .width('100%')
+    }
+    .width('88%')
+    .padding(20)
+    .backgroundColor('#1A2332')
+    .borderRadius(16)
+    .shadow({ radius: 24, color: '#000000DD', offsetX: 0, offsetY: 8 })
   }
 
   @Builder
