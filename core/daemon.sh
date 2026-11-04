@@ -38,6 +38,14 @@ CMD_TIMEOUT_KILL=5
 mkdir -p "${WORK_DIR}" 2>/dev/null
 mkdir -p "${BUS_DIR}" 2>/dev/null
 
+# 状态恢复与清理
+cleanup() {
+    power-shell timeout -r >/dev/null 2>&1
+    rm -f "${PID_FILE}" 2>/dev/null
+    exit 0
+}
+trap cleanup INT TERM
+
 # Single instance enforcement
 if [ -f "${PID_FILE}" ]; then
     OLD_PID=$(cat "${PID_FILE}" 2>/dev/null)
@@ -54,6 +62,8 @@ printf "ID:init RC:0 TIME:0\nHMArkPriv Shell Server Ready\n" > "${RES_FILE}" 2>/
 printf '{"framework":"HMArkPriv","status":"ready","pid":%d,"uid":%d}\n' "$$" "$(id -u)" > "${STATUS_FILE}" 2>/dev/null
 
 LAST_REQ_ID=""
+CHARGE_CHECK_COUNTER=55
+IS_KEEPING_AWAKE=0
 
 # ------------------------------------------------------------------------------
 # 执行一条命令并写结果
@@ -201,6 +211,24 @@ ${LINE}"
 
     # ---- 协议 2：队列槽位（跨应用调用）----
     process_slots
+
+    # ---- 自动维护：充电防熄屏（充电时保持常亮，未充电时恢复正常熄屏）----
+    CHARGE_CHECK_COUNTER=$((CHARGE_CHECK_COUNTER + 1))
+    if [ "${CHARGE_CHECK_COUNTER}" -ge 60 ]; then
+        CHARGE_CHECK_COUNTER=0
+        CURRENT_PLUG=$(hilog -x -T BatteryInfo 2>/dev/null | grep -o 'pluggedType=[0-9]' | tail -n 1 | cut -d= -f2)
+        if [ -n "${CURRENT_PLUG}" ] && [ "${CURRENT_PLUG}" != "0" ]; then
+            if [ "${IS_KEEPING_AWAKE}" -ne 1 ]; then
+                power-shell timeout -o 86400000 >/dev/null 2>&1
+                IS_KEEPING_AWAKE=1
+            fi
+        else
+            if [ "${IS_KEEPING_AWAKE}" -ne 0 ]; then
+                power-shell timeout -r >/dev/null 2>&1
+                IS_KEEPING_AWAKE=0
+            fi
+        fi
+    fi
 
     # Low-power sleep (snappy 50ms interval)
     sleep 0.05

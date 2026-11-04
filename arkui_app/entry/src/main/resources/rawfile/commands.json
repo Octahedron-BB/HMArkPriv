@@ -126,67 +126,110 @@
             },
             {
               "cmd": "aa start -b <bundleName> -a <abilityName> [-m <moduleName>]",
-              "desc": ""
+              "desc": "显式启动（推荐，需要 bundleName + abilityName）："
             },
             {
               "cmd": "aa start -b com.huawei.hmos.settings -a com.huawei.hmos.settings.MainAbility",
-              "desc": ""
+              "desc": "示例：启动系统设置",
+              "tags": [
+                "实机"
+              ]
             },
             {
               "cmd": "aa start -b com.huawei.hmos.calculator -a MainAbility",
-              "desc": ""
+              "desc": "示例：启动计算器",
+              "tags": [
+                "实机"
+              ]
             },
             {
               "cmd": "aa start -b com.example.app -a EntryAbility -m entry",
-              "desc": ""
+              "desc": "示例：带 moduleName",
+              "tags": [
+                "官方"
+              ]
             },
             {
               "cmd": "aa start -U <URI> [-A <action>] [-t <type>] [-e <entity>]",
-              "desc": ""
+              "desc": "隐式启动（通过 URI / Action）[官方]："
             },
             {
               "cmd": "aa start -A ohos.want.action.viewData -U https://www.example.com",
-              "desc": ""
+              "desc": "打开网页",
+              "tags": [
+                "官方"
+              ]
             },
             {
               "cmd": "aa start -U kwai://home",
-              "desc": ""
+              "desc": "打开 Scheme",
+              "tags": [
+                "社区"
+              ]
             },
             {
               "cmd": "aa start -U myscheme://www.test.com:8080/path --pi paramNumber 1 --pb paramBoolean true --ps paramString teststring",
-              "desc": ""
+              "desc": "带参数启动",
+              "tags": [
+                "官方"
+              ]
             },
             {
               "cmd": "aa force-stop <bundleName>",
-              "desc": ""
+              "desc": "强制停止整个进程",
+              "tags": [
+                "官方",
+                "实机"
+              ]
             },
             {
               "cmd": "aa stop-service -a <abilityName> -b <bundleName> [-m <moduleName>]",
-              "desc": ""
+              "desc": "停止 Service 组件",
+              "tags": [
+                "官方"
+              ]
             },
             {
               "cmd": "aa dump -l",
-              "desc": ""
+              "desc": "查看当前所有最近任务与前台页面栈",
+              "tags": [
+                "实机"
+              ]
             },
             {
               "cmd": "aa dump -r",
-              "desc": ""
+              "desc": "查看系统当前所有运行中的 Ability 进程列表",
+              "tags": [
+                "实机"
+              ]
             },
             {
               "cmd": "aa dump -a",
-              "desc": ""
+              "desc": "查看所有已注册的能力记录",
+              "tags": [
+                "官方"
+              ]
             },
             {
               "cmd": "aa dump -i <abilityRecordId>",
-              "desc": ""
+              "desc": "查看指定 Ability 详细信息",
+              "tags": [
+                "官方"
+              ]
             },
             {
               "cmd": "aa dump -e <elementName>",
-              "desc": ""
+              "desc": "查看扩展组件信息",
+              "tags": [
+                "官方"
+              ]
             },
             {
               "cmd": "aa dump -p",
-              "desc": ""
+              "desc": "查看应用进程信息",
+              "tags": [
+                "官方"
+              ]
             },
             {
               "cmd": "aa attach -b <bundleName>",
@@ -214,7 +257,7 @@
             },
             {
               "cmd": "aa test -b <bundleName> [-m <moduleName>] -s unittest <testRunner> [options]",
-              "desc": ""
+              "desc": "2.1.5 测试框架 [官方]"
             },
             {
               "cmd": "aa send-memory-level -p <pid> -l <memoryLevel>",
@@ -646,51 +689,93 @@
           "items": [
             {
               "cmd": "uinput -T -c <x> <y>",
-              "desc": ""
+              "desc": "单击",
+              "tags": [
+                "官方",
+                "实机"
+              ]
             },
             {
               "cmd": "uinput -T -c 630 1422",
-              "desc": ""
+              "desc": "单击",
+              "tags": [
+                "官方",
+                "实机"
+              ]
             },
             {
               "cmd": "uinput -T -d <x> <y>",
-              "desc": ""
+              "desc": "按下 / 抬起",
+              "tags": [
+                "官方"
+              ]
             },
             {
               "cmd": "uinput -T -u <x> <y>",
-              "desc": ""
+              "desc": "按下 / 抬起",
+              "tags": [
+                "官方"
+              ]
             },
             {
               "cmd": "uinput -T -m <x1> <y1> <x2> <y2> [smooth_time_ms]",
-              "desc": ""
+              "desc": "滑动",
+              "tags": [
+                "官方",
+                "实机"
+              ]
             },
             {
               "cmd": "uinput -T -m 1100 50 1100 900 250",
-              "desc": ""
+              "desc": "滑动",
+              "tags": [
+                "官方",
+                "实机"
+              ]
             },
             {
               "cmd": "uinput -T -m <x1> <y1> <x2> <y2> -k <keep_time_ms> [smooth_time_ms]",
-              "desc": ""
+              "desc": "滑动（带保持时间）",
+              "tags": [
+                "官方"
+              ]
             },
             {
               "cmd": "uinput -T -m 300 900 300 2000 600 900 600 2000 900 900 900 2000 -k 1000 200",
-              "desc": ""
+              "desc": "三指滑动",
+              "tags": [
+                "官方"
+              ]
             },
             {
               "cmd": "uinput -T -g <x1> <y1> <x2> <y2> [press_time_ms] [total_time_ms]",
-              "desc": ""
+              "desc": "拖拽",
+              "tags": [
+                "官方"
+              ]
             },
             {
               "cmd": "uinput -T -i <time_ms>",
-              "desc": ""
+              "desc": "设置事件间隔",
+              "tags": [
+                "官方"
+              ]
             },
             {
               "cmd": "uinput -K -d <keyCode>",
-              "desc": ""
+              "desc": "按下 / 抬起",
+              "tags": [
+                "官方",
+                "实机"
+              ]
             },
             {
               "cmd": "uinput -K -u <keyCode>",
-              "desc": ""
+              "desc": "按下 / 抬起",
+              "tags": [
+                "官方",
+                "实机"
+              ]
             },
             {
               "cmd": "uinput -K -d 2 -u 2",
@@ -698,15 +783,24 @@
             },
             {
               "cmd": "uinput -K -l <keyCode> [duration_ms]",
-              "desc": ""
+              "desc": "长按",
+              "tags": [
+                "官方"
+              ]
             },
             {
               "cmd": "uinput -K -r <keyCode> [duration_ms]",
-              "desc": ""
+              "desc": "持续重复输入",
+              "tags": [
+                "官方"
+              ]
             },
             {
               "cmd": "uinput -K -t \"Hello,World!\"",
-              "desc": ""
+              "desc": "文本输入（仅 ASCII，最大 2000 字符）",
+              "tags": [
+                "官方"
+              ]
             },
             {
               "cmd": "uinput -K -d 2072 2038",
@@ -714,7 +808,10 @@
             },
             {
               "cmd": "uinput -K -i <time_ms>",
-              "desc": ""
+              "desc": "设置事件间隔",
+              "tags": [
+                "官方"
+              ]
             },
             {
               "cmd": "uinput -M -m <dx> <dy>",
@@ -862,11 +959,14 @@
             },
             {
               "cmd": "uitest dumpLayout -p /data/local/tmp/",
-              "desc": ""
+              "desc": "导出控件树 JSON"
             },
             {
               "cmd": "uitest dumpLayout -w <FocusWinId> -p /data/local/tmp/focus_layout.json",
-              "desc": ""
+              "desc": "导出指定窗口的控件树",
+              "tags": [
+                "实机"
+              ]
             },
             {
               "cmd": "uitest uiRecord record",
@@ -1013,11 +1113,14 @@
             },
             {
               "cmd": "hidumper -s MemoryManagerService -a -r",
-              "desc": ""
+              "desc": "5.2 核心硬件与服务查询"
             },
             {
               "cmd": "hidumper -s AbilityManagerService",
-              "desc": ""
+              "desc": "Ability 管理器（替代 aa dump）",
+              "tags": [
+                "官方"
+              ]
             }
           ]
         },
@@ -1738,23 +1841,47 @@
           "items": [
             {
               "cmd": "hilog -x 2>/dev/null | grep -oE '[A-Za-z0-9_.$]+/[A-Za-z0-9_.]+/entry/0' | sort -u | sed 's|/entry/0||' | sed 's|\\(.*\\)/\\(.*\\)|aa start -b \\2 -a \\1|'",
-              "desc": "一键列出近期容器应用并生成启动指令(免切前台)"
+              "desc": "直接生成标准的 aa start 启动指令列表"
+            },
+            {
+              "cmd": "aa start -b com.aistra.hail -a com.aistra.hail.ui.main.MainActivity",
+              "desc": "实测输出（毫秒级返回，直接复制可用）："
+            },
+            {
+              "cmd": "aa start -b com.android.settings -a com.android.settings.Settings$ManageApplicationsActivity",
+              "desc": "实测输出（毫秒级返回，直接复制可用）："
+            },
+            {
+              "cmd": "aa start -b com.android.settings -a com.android.settings.Settings$NotificationAccessSettingsActivity",
+              "desc": "实测输出（毫秒级返回，直接复制可用）："
+            },
+            {
+              "cmd": "aa start -b com.easy.abroad -a com.easy.abroad.activities.MainActivity",
+              "desc": "实测输出（毫秒级返回，直接复制可用）："
+            },
+            {
+              "cmd": "aa start -b org.kde.kdeconnect_tp -a org.kde.kdeconnect.UserInterface.MainActivity",
+              "desc": "实测输出（毫秒级返回，直接复制可用）："
             },
             {
               "cmd": "hilog -x 2>/dev/null | grep -oE '[A-Za-z0-9_.$]+/[A-Za-z0-9_.]+/entry/0' | sort -u | sed 's|/entry/0||' | sed 's|\\(.*\\)/\\(.*\\)|\\2 : \\1|'",
-              "desc": "查看近期容器应用 包名:Activity 映射表"
+              "desc": "实测输出（毫秒级返回，直接复制可用）："
             },
             {
               "cmd": "sleep 3 && uitest dumpLayout -p /data/local/tmp/d.json >/dev/null 2>&1 && grep -oE '\"bundleName\":\"[^\"]+\"|\"abilityName\":\"[^\"]+\"' /data/local/tmp/d.json | grep -v 'sceneboard' | sort -u",
-              "desc": "延时3秒抓取前台屏幕应用包名与Activity"
+              "desc": "方法 B：延时 3 秒精准抓取当前屏幕应用（解决前台切换问题）"
             },
             {
               "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$ManageApplicationsActivity\"",
-              "desc": "打开容器应用管理列表(查看已装应用)"
+              "desc": "1. 打开容器内应用管理列表（查看所有已装应用、存储占用、版本、强停与卸载）"
             },
             {
               "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$NotificationAccessSettingsActivity\"",
-              "desc": "打开容器通知使用权设置"
+              "desc": "2. 打开容器内“通知使用权”授权页（直接在列表勾选短信转发器/KDE Connect）"
+            },
+            {
+              "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$SpecialAccessSettingsActivity\"",
+              "desc": "3. 打开容器内特殊访问权限设置总览"
             }
           ]
         }

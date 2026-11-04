@@ -1,31 +1,32 @@
 #!/usr/bin/env python3
 """
 从 docs/HarmonyOS-Shell-指令全集.md 提取结构化指令数据，
-生成 arkui-app/entry/src/main/resources/rawfile/commands.json 供 App 侧边栏使用。
+生成 arkui_app/entry/src/main/resources/rawfile/commands.json 供 App 侧边栏使用。
 
 提取规则：
   1. 按 ## 分大分类，### 分子分组
   2. 表格行 `| \`cmd\` | desc | tag |` → 指令项
-  3. bash 代码块内 `cmd   # desc` → 指令项
+  3. bash 代码块内 `cmd   # desc` 或上方独立注释 `# desc` → 指令项
   4. 过滤 hdc 开头的（那是电脑端，手机端执行不了）
   5. 标注 [未验证] 的单独打标
 
-用法：python scripts/gen-commands-json.py
+用法：python3 arkui_app/scripts/gen-commands-json.py
 """
 
 import json
 import os
 import re
 
-SRC = 'docs/HarmonyOS-Shell-指令全集.md'
-OUT = 'arkui-app/entry/src/main/resources/rawfile/commands.json'
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..'))
+
+SRC = os.path.join(PROJECT_ROOT, 'docs', 'HarmonyOS-Shell-指令全集.md')
+OUT = os.path.join(PROJECT_ROOT, 'arkui_app', 'entry', 'src', 'main', 'resources', 'rawfile', 'commands.json')
 
 # 手机端不可用的前缀（这些是电脑端 hdc 命令）
 SKIP_PREFIX = ('hdc ', 'adb ', 'hdc.exe')
 
 # 命令白名单：命令的第一个词必须在此列表内，否则视为参数碎片丢弃
-# （指令全集的详细参数小节里有大量 `-A <action>`、`-e <entity>` 这类片段，
-#   单独展开到终端没有意义，必须在提取阶段滤掉）
 KNOWN_CMDS = {
     # 鸿蒙专有工具
     'aa', 'bm', 'hidumper', 'uinput', 'uitest', 'power-shell', 'snapshot_display',
@@ -57,19 +58,14 @@ def make_summary(lines):
     """
     把框式注释块的多行内容压成一句摘要。
     优先取「作用：」那行，否则取第一行有意义的文字。
-    长度限制在 60 字符内，适配侧边栏显示。
+    长度限制在 70 字符内，适配侧边栏显示。
     """
-    # 优先找 "作用：" 开头
     for ln in lines:
         if ln.startswith('作用'):
-            # 去掉 "作用：" 或 "作用（理论）："
             v = re.sub(r'^作用（?[^）]*）?[：:]\s*', '', ln)
             return v[:70]
-    # 其次找第一行非标题行
     for ln in lines:
-        if ln and not ln.startswith('✅') and not ln.startswith('❌') and \
-           not ln.startswith('⚠️') and not ln.startswith('❓') and \
-           not ln.startswith('├') and not ln.startswith('└'):
+        if ln and not ln.startswith(('✅', '❌', '⚠️', '❓', '├', '└')):
             return ln[:70]
     return ''
 
@@ -85,6 +81,10 @@ def extract_tags(text):
 
 
 def main():
+    if not os.path.exists(SRC):
+        print(f'[!] 找不到源文件: {SRC}')
+        return
+
     with open(SRC, 'r', encoding='utf-8') as f:
         lines = f.read().split('\n')
 
@@ -93,6 +93,10 @@ def main():
     cur_grp = None           # 当前子分组
     in_code = False
     cur_h2 = ''
+    last_subheading = ''
+    box_desc = []
+    preceding_comment = ''
+    preceding_tags = []
 
     def ensure_group(name=''):
         nonlocal cur_cat, cur_grp
@@ -100,33 +104,28 @@ def main():
             cur_cat = {'name': cur_h2 or '其他', 'groups': []}
             categories.append(cur_cat)
         if cur_grp is None:
-            # 组名为空时用分类名兜底，避免侧边栏出现空白分组标题
             display = name or cur_cat['name'] or '其他'
             cur_grp = {'name': display, 'items': []}
             cur_cat['groups'].append(cur_grp)
         return cur_grp
 
-    # 框式注释缓冲区：收集 `# ┌───┐ ... # └───┘` 块里的说明文字
-    box_desc = []
-
     def add_item(cmd, desc, tags):
         cmd = cmd.strip()
-        if not cmd or cmd.startswith(SKIP_PREFIX):
+        if not cmd or cmd.startswith(SKIP_PREFIX) or cmd in ('...', '…') or len(cmd) < 2:
             return
-        # 过滤纯占位符
-        if cmd in ('...', '…') or len(cmd) < 2:
-            return
-        # 白名单校验：首个词必须是已知命令，否则是参数碎片
         first = cmd.split()[0]
-        # 允许带路径前缀的（如 /system/bin/aa）
         if '/' in first:
             first = first.rsplit('/', 1)[-1]
         if first not in KNOWN_CMDS:
             return
         g = ensure_group()
-        # 去重（同一分组内）
         for it in g['items']:
             if it['cmd'] == cmd:
+                # 若旧项没有 desc 但新传入有 desc，则补充
+                if not it.get('desc') and desc:
+                    it['desc'] = clean(desc)
+                    if tags:
+                        it['tags'] = tags
                 return
         item = {'cmd': cmd, 'desc': clean(desc)}
         if tags:
@@ -139,6 +138,10 @@ def main():
         # 代码块开关
         if line.startswith('```'):
             in_code = not in_code
+            if not in_code:
+                box_desc = []
+                preceding_comment = ''
+                preceding_tags = []
             continue
 
         # 大分类 ##
@@ -152,6 +155,7 @@ def main():
             cur_h2 = title
             cur_cat = None
             cur_grp = None
+            last_subheading = ''
             continue
 
         # 子分组 ###
@@ -165,52 +169,80 @@ def main():
                     continue
                 cur_cat = {'name': cur_h2, 'groups': []}
                 categories.append(cur_cat)
-            # 去掉标题里的 [实机] 等标注
             pure, tags = extract_tags(title)
             cur_grp = {'name': pure}
             if tags:
                 cur_grp['tags'] = tags
             cur_grp['items'] = []
             cur_cat['groups'].append(cur_grp)
+            last_subheading = pure
             continue
 
-        # 代码块内：`cmd  # desc`
+        # 4 级小节 ####
+        if line.startswith('#### '):
+            last_subheading = clean(line[5:])
+            continue
+
+        # 段落加粗标题 **显式启动**
+        if line.startswith('**') and ('：' in line or line.endswith('**')):
+            last_subheading = clean(line)
+            continue
+
+        # 代码块内
         if in_code:
             stripped = line.strip()
 
-            # ---- 框式注释块：收集 ┌ ... └ 之间的文字 ----
-            if stripped.startswith('#') and ('┌' in stripped or '├' in stripped or
-                                             '│' in stripped or '└' in stripped):
-                # 提取 │ 后面的内容
+            # ---- 框式注释块 ----
+            if stripped.startswith('#') and any(c in stripped for c in ('┌', '├', '│', '└')):
                 m_box = re.match(r'^#\s*│\s*(.*?)\s*│?\s*$', stripped)
                 if m_box:
                     content = m_box.group(1).strip()
-                    # 去掉纯分隔线
                     if content and not re.match(r'^[─-]+$', content):
                         box_desc.append(content)
                 continue
 
-            # ---- 命令行 ----
+            # ---- 普通独立注释行 ----
+            if stripped.startswith('#'):
+                c_text = stripped.lstrip('#').strip()
+                if c_text and not re.match(r'^[─=-]+$', c_text):
+                    pure_c, c_tags = extract_tags(c_text)
+                    preceding_comment = pure_c
+                    preceding_tags = c_tags
+                continue
+
+            # ---- 命令行（带行内 # 注释）----
             m = re.match(r'^\s*([a-zA-Z_][\w\.-]*(?:\s+[^#]*?)?)\s*#\s*(.+)$', line)
             if m:
                 cmd = m.group(1).strip()
                 desc_raw = m.group(2).strip()
                 desc, tags = extract_tags(desc_raw)
-                # 若有框式注释，优先用它（更详细）
                 if box_desc:
                     desc = make_summary(box_desc)
                     box_desc = []
                 add_item(cmd, desc, tags)
+                preceding_comment = ''
+                preceding_tags = []
                 continue
             else:
-                # 没有行内注释的纯命令行
-                if stripped and not stripped.startswith('#'):
+                # ---- 没有行内注释的命令行 ----
+                if stripped:
                     first = stripped.split()[0] if stripped.split() else ''
                     if re.match(r'^[a-z_][\w\./-]*$', first) and first not in (
                             'if', 'then', 'else', 'fi', 'for', 'do', 'done', 'echo', 'export'):
-                        desc = make_summary(box_desc) if box_desc else ''
-                        box_desc = []
-                        add_item(stripped, desc, [])
+                        if box_desc:
+                            desc = make_summary(box_desc)
+                            tags = []
+                            box_desc = []
+                        elif preceding_comment:
+                            desc = preceding_comment
+                            tags = preceding_tags
+                        elif last_subheading:
+                            desc = last_subheading
+                            tags = []
+                        else:
+                            desc = cur_grp['name'] if cur_grp else ''
+                            tags = []
+                        add_item(stripped, desc, tags)
             continue
 
         # 表格行：| `cmd` | desc | tag |
