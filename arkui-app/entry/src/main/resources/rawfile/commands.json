@@ -1,0 +1,1738 @@
+{
+  "categories": [
+    {
+      "name": "1. Shell 环境概述",
+      "groups": [
+        {
+          "name": "1.2 环境信息命令",
+          "tags": [
+            "实机"
+          ],
+          "items": [
+            {
+              "cmd": "id",
+              "desc": "uid=2000(shell) gid=2000(shell) ..."
+            },
+            {
+              "cmd": "uname -a",
+              "desc": "HongMeng Kernel 1.13.0 ... aarch64 Toybox"
+            },
+            {
+              "cmd": "echo $PATH",
+              "desc": "查看可执行文件搜索路径"
+            },
+            {
+              "cmd": "whoami",
+              "desc": "shell"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. 应用与任务管理（aa / bm）",
+      "groups": [
+        {
+          "name": "2.1 Ability Assistant（aa）",
+          "tags": [
+            "官方"
+          ],
+          "items": [
+            {
+              "cmd": "aa help",
+              "desc": "帮助",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "aa start",
+              "desc": "启动应用组件",
+              "tags": [
+                "官方",
+                "实机"
+              ]
+            },
+            {
+              "cmd": "aa stop-service",
+              "desc": "停止 Service 组件",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "aa force-stop",
+              "desc": "强制停止进程",
+              "tags": [
+                "官方",
+                "实机"
+              ]
+            },
+            {
+              "cmd": "aa dump",
+              "desc": "打印应用组件信息（已废弃，建议用 hidumper）",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "aa test",
+              "desc": "启动测试框架",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "aa attach",
+              "desc": "使应用进入调试模式",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "aa detach",
+              "desc": "使应用退出调试模式",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "aa appdebug",
+              "desc": "设置/取消/获取等待调试状态",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "aa process",
+              "desc": "应用调试/调优",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "aa send-memory-level",
+              "desc": "触发 onMemoryLevel 回调（API 13+）",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "aa pre-start",
+              "desc": "应用预启动（API 26+）",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "aa start -b <bundleName> -a <abilityName> [-m <moduleName>]",
+              "desc": ""
+            },
+            {
+              "cmd": "aa start -b com.huawei.hmos.settings -a com.huawei.hmos.settings.MainAbility",
+              "desc": ""
+            },
+            {
+              "cmd": "aa start -b com.huawei.hmos.calculator -a MainAbility",
+              "desc": ""
+            },
+            {
+              "cmd": "aa start -b com.example.app -a EntryAbility -m entry",
+              "desc": ""
+            },
+            {
+              "cmd": "aa start -U <URI> [-A <action>] [-t <type>] [-e <entity>]",
+              "desc": ""
+            },
+            {
+              "cmd": "aa start -A ohos.want.action.viewData -U https://www.example.com",
+              "desc": ""
+            },
+            {
+              "cmd": "aa start -U kwai://home",
+              "desc": ""
+            },
+            {
+              "cmd": "aa start -U myscheme://www.test.com:8080/path --pi paramNumber 1 --pb paramBoolean true --ps paramString teststring",
+              "desc": ""
+            },
+            {
+              "cmd": "aa force-stop <bundleName>",
+              "desc": ""
+            },
+            {
+              "cmd": "aa stop-service -a <abilityName> -b <bundleName> [-m <moduleName>]",
+              "desc": ""
+            },
+            {
+              "cmd": "aa dump -l",
+              "desc": ""
+            },
+            {
+              "cmd": "aa dump -r",
+              "desc": ""
+            },
+            {
+              "cmd": "aa dump -a",
+              "desc": ""
+            },
+            {
+              "cmd": "aa dump -i <abilityRecordId>",
+              "desc": ""
+            },
+            {
+              "cmd": "aa dump -e <elementName>",
+              "desc": ""
+            },
+            {
+              "cmd": "aa dump -p",
+              "desc": ""
+            },
+            {
+              "cmd": "aa attach -b <bundleName>",
+              "desc": "进入调试模式"
+            },
+            {
+              "cmd": "aa detach -b <bundleName>",
+              "desc": "退出调试模式"
+            },
+            {
+              "cmd": "aa appdebug -b <bundleName> [-p]",
+              "desc": "设置等待调试（-p 持久化）"
+            },
+            {
+              "cmd": "aa appdebug -c",
+              "desc": "取消等待调试"
+            },
+            {
+              "cmd": "aa appdebug -g",
+              "desc": "获取等待调试状态"
+            },
+            {
+              "cmd": "aa process -b <bundleName> -a <abilityName> [-D <debug-cmd>] [-p <perf-cmd>] [-S]",
+              "desc": "调试/调优"
+            },
+            {
+              "cmd": "aa test -b <bundleName> [-m <moduleName>] -s unittest <testRunner> [options]",
+              "desc": ""
+            },
+            {
+              "cmd": "aa send-memory-level -p <pid> -l <memoryLevel>",
+              "desc": "触发 onMemoryLevel（API 13+）"
+            },
+            {
+              "cmd": "aa pre-start -m 1 -b <bundleName> -u <userId>",
+              "desc": "应用预启动（API 26+）"
+            }
+          ]
+        },
+        {
+          "name": "2.2 Bundle Manager（bm）",
+          "tags": [
+            "官方"
+          ],
+          "items": [
+            {
+              "cmd": "bm help",
+              "desc": "帮助",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm install",
+              "desc": "安装应用",
+              "tags": [
+                "官方",
+                "实机"
+              ]
+            },
+            {
+              "cmd": "bm uninstall",
+              "desc": "卸载应用",
+              "tags": [
+                "官方",
+                "实机"
+              ]
+            },
+            {
+              "cmd": "bm dump",
+              "desc": "查询应用信息",
+              "tags": [
+                "官方",
+                "实机"
+              ]
+            },
+            {
+              "cmd": "bm clean",
+              "desc": "清理缓存/数据",
+              "tags": [
+                "官方",
+                "实机"
+              ]
+            },
+            {
+              "cmd": "bm get --udid",
+              "desc": "获取设备 UDID",
+              "tags": [
+                "官方",
+                "社区"
+              ]
+            },
+            {
+              "cmd": "bm compile",
+              "desc": "编译 AOT",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm quickfix",
+              "desc": "快速修复补丁",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm dump-shared",
+              "desc": "查询共享库信息",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm dump-dependencies",
+              "desc": "查询依赖关系",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm dump-overlay",
+              "desc": "查询 Overlay 信息",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm dump-target-overlay",
+              "desc": "查询目标 Overlay 信息",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm copy-ap",
+              "desc": "拷贝 AP 文件",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm install-plugin",
+              "desc": "安装插件",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm uninstall-plugin",
+              "desc": "卸载插件",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm dump -a",
+              "desc": "列出所有已安装应用包名",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "bm dump -a -l",
+              "desc": "包名 + 应用名称（label）",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm dump -n <bundleName>",
+              "desc": "单个应用详情（JSON）",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "bm dump -g",
+              "desc": "调试类型应用",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm dump -s -n <bundleName>",
+              "desc": "快捷方式信息",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm dump-shared -a",
+              "desc": "所有共享库",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm dump-shared -n <bundleName>",
+              "desc": "指定共享库详情",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm dump-dependencies -n <bundleName> -m <moduleName>",
+              "desc": "依赖关系",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm dump-overlay -b <bundleName> [-m <moduleName>]",
+              "desc": "Overlay 信息",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm dump-target-overlay -b <bundleName> [-m <moduleName>]",
+              "desc": "目标 Overlay",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm install -p /data/local/tmp/app.hap",
+              "desc": "安装",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "bm install -p /data/local/tmp/app.hap -r",
+              "desc": "覆盖安装",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm install -p /data/local/tmp/app.hap -d",
+              "desc": "降级安装",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm install -p /data/local/tmp/app.hap -g",
+              "desc": "自动授权（debug）",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm install -p /data/local/tmp/app.app",
+              "desc": "安装 APP 包（API 22+）",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm uninstall -n <bundleName>",
+              "desc": "卸载",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "bm uninstall -n <bundleName> -k",
+              "desc": "卸载保留数据",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm uninstall -n <bundleName> -m <moduleName>",
+              "desc": "卸载指定模块",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm uninstall -n <bundleName> -s [-v <versionCode>]",
+              "desc": "卸载共享库",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "bm clean -c -n <bundleName>",
+              "desc": "清理缓存"
+            },
+            {
+              "cmd": "bm clean -d -n <bundleName>",
+              "desc": "清理用户数据"
+            },
+            {
+              "cmd": "bm compile -m partial <bundleName>",
+              "desc": "编译指定应用"
+            },
+            {
+              "cmd": "bm compile -m full <bundleName>",
+              "desc": "完整编译"
+            },
+            {
+              "cmd": "bm compile -a -m partial",
+              "desc": "编译所有应用"
+            },
+            {
+              "cmd": "bm compile -r <bundleName>",
+              "desc": "移除编译结果"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. 屏幕与电源管理（power-shell / snapshot_display）",
+      "groups": [
+        {
+          "name": "3.1 电源管理（power-shell）",
+          "items": [
+            {
+              "cmd": "power-shell wakeup",
+              "desc": "唤醒设备",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "power-shell suspend",
+              "desc": "熄灭屏幕",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "power-shell timeout -o 3600000",
+              "desc": "常亮 1 小时",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "power-shell timeout -o 86400000",
+              "desc": "常亮 24 小时",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "power-shell timeout -r",
+              "desc": "恢复默认熄屏",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "power-shell setmode 600",
+              "desc": "正常模式",
+              "tags": [
+                "未验证"
+              ]
+            },
+            {
+              "cmd": "power-shell setmode 601",
+              "desc": "省电模式",
+              "tags": [
+                "未验证"
+              ]
+            },
+            {
+              "cmd": "power-shell setmode 602",
+              "desc": "超级省电模式",
+              "tags": [
+                "未验证"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "3.2 屏幕截图（snapshot_display）",
+          "tags": [
+            "社区",
+            "实机"
+          ],
+          "items": [
+            {
+              "cmd": "snapshot_display -f /data/local/tmp/screen.jpeg",
+              "desc": "截图保存",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "snapshot_display -d 0 -f /data/local/tmp/screen.png",
+              "desc": "指定屏幕编号",
+              "tags": [
+                "社区"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "3.3 通过 hidumper 查看屏幕/电源状态",
+          "tags": [
+            "社区"
+          ],
+          "items": [
+            {
+              "cmd": "hidumper -s PowerManagerService -a -s",
+              "desc": "屏幕状态（AWAKE/SLEEP/INACTIVE）",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hidumper -s RenderService -a screen",
+              "desc": "分辨率、刷新率",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hidumper -s DisplayManagerService -a -a",
+              "desc": "屏幕信息",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hidumper -s DisplayManagerService -a -f",
+              "desc": "折叠状态",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hidumper -s RenderService -a \"composer fps\"",
+              "desc": "帧率",
+              "tags": [
+                "社区"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. 触控模拟与硬件输入（uinput / uitest）",
+      "groups": [
+        {
+          "name": "4.1 uinput — 硬件级输入注入",
+          "tags": [
+            "官方"
+          ],
+          "items": [
+            {
+              "cmd": "uinput -T -c <x> <y>",
+              "desc": ""
+            },
+            {
+              "cmd": "uinput -T -c 630 1422",
+              "desc": ""
+            },
+            {
+              "cmd": "uinput -T -d <x> <y>",
+              "desc": ""
+            },
+            {
+              "cmd": "uinput -T -u <x> <y>",
+              "desc": ""
+            },
+            {
+              "cmd": "uinput -T -m <x1> <y1> <x2> <y2> [smooth_time_ms]",
+              "desc": ""
+            },
+            {
+              "cmd": "uinput -T -m 1100 50 1100 900 250",
+              "desc": ""
+            },
+            {
+              "cmd": "uinput -T -m <x1> <y1> <x2> <y2> -k <keep_time_ms> [smooth_time_ms]",
+              "desc": ""
+            },
+            {
+              "cmd": "uinput -T -m 300 900 300 2000 600 900 600 2000 900 900 900 2000 -k 1000 200",
+              "desc": ""
+            },
+            {
+              "cmd": "uinput -T -g <x1> <y1> <x2> <y2> [press_time_ms] [total_time_ms]",
+              "desc": ""
+            },
+            {
+              "cmd": "uinput -T -i <time_ms>",
+              "desc": ""
+            },
+            {
+              "cmd": "uinput -K -d <keyCode>",
+              "desc": ""
+            },
+            {
+              "cmd": "uinput -K -u <keyCode>",
+              "desc": ""
+            },
+            {
+              "cmd": "uinput -K -d 2 -u 2",
+              "desc": "返回键"
+            },
+            {
+              "cmd": "uinput -K -l <keyCode> [duration_ms]",
+              "desc": ""
+            },
+            {
+              "cmd": "uinput -K -r <keyCode> [duration_ms]",
+              "desc": ""
+            },
+            {
+              "cmd": "uinput -K -t \"Hello,World!\"",
+              "desc": ""
+            },
+            {
+              "cmd": "uinput -K -d 2072 2038",
+              "desc": "Ctrl+V"
+            },
+            {
+              "cmd": "uinput -K -i <time_ms>",
+              "desc": ""
+            },
+            {
+              "cmd": "uinput -M -m <dx> <dy>",
+              "desc": "移动"
+            },
+            {
+              "cmd": "uinput -M -m <x1> <y1> <x2> <y2> [smooth_time_ms] --trace",
+              "desc": "带轨迹移动"
+            },
+            {
+              "cmd": "uinput -M -d <buttonId>",
+              "desc": "按下 (0=左 1=右 2=中)"
+            },
+            {
+              "cmd": "uinput -M -u <buttonId>",
+              "desc": "抬起"
+            },
+            {
+              "cmd": "uinput -M -c <buttonId>",
+              "desc": "单击"
+            },
+            {
+              "cmd": "uinput -M -b <x> <y> <buttonId> [press_time] [interval]",
+              "desc": "双击"
+            },
+            {
+              "cmd": "uinput -M -m <x> <y> -s <number>",
+              "desc": "滚轮 (正数向后)"
+            },
+            {
+              "cmd": "uinput -M -g <x1> <y1> <x2> <y2> [total_time_ms]",
+              "desc": "拖拽"
+            },
+            {
+              "cmd": "uinput -M -q",
+              "desc": "查询光标信息"
+            },
+            {
+              "cmd": "uinput -M -i <time_ms>",
+              "desc": "设置事件间隔"
+            },
+            {
+              "cmd": "uinput -S -d <x> <y>",
+              "desc": "按下"
+            },
+            {
+              "cmd": "uinput -S -u <x> <y>",
+              "desc": "抬起"
+            },
+            {
+              "cmd": "uinput -S -c <x> <y> [click_interval]",
+              "desc": "单击"
+            },
+            {
+              "cmd": "uinput -S -m <x1> <y1> <x2> <y2> [smooth_time] [-k keep]",
+              "desc": "移动"
+            },
+            {
+              "cmd": "uinput -S -g <x1> <y1> <x2> <y2> [press_time] [total_time]",
+              "desc": "拖拽"
+            },
+            {
+              "cmd": "uinput -P -p <x> <y> <scalePercent>",
+              "desc": "捏合 (<100 缩小, >100 放大)"
+            },
+            {
+              "cmd": "uinput -P -s <startX> <startY> <endX> <endY>",
+              "desc": "三指滑动"
+            },
+            {
+              "cmd": "uinput -P -r <degrees>",
+              "desc": "旋转（官方注明当前版本可能无效）"
+            },
+            {
+              "cmd": "uinput -T -k -s <x1> <y1> <x2> <y2> [interval_ms]",
+              "desc": "单指关节双击"
+            },
+            {
+              "cmd": "uinput -T -k -d <x1> <y1> <x2> <y2> [interval_ms]",
+              "desc": "双指关节双击"
+            },
+            {
+              "cmd": "uinput enable_key_status 1 [duration_seconds]",
+              "desc": "启用（默认 10 秒）"
+            },
+            {
+              "cmd": "uinput enable_key_status 0",
+              "desc": "禁用"
+            }
+          ]
+        },
+        {
+          "name": "4.2 uitest — UI 自动化工具",
+          "tags": [
+            "社区"
+          ],
+          "items": [
+            {
+              "cmd": "uitest uiInput click <x> <y>",
+              "desc": "点击"
+            },
+            {
+              "cmd": "uitest uiInput doubleClick <x> <y>",
+              "desc": "双击"
+            },
+            {
+              "cmd": "uitest uiInput longClick <x> <y>",
+              "desc": "长按"
+            },
+            {
+              "cmd": "uitest uiInput fling <x1> <y1> <x2> <y2> [velocity] [step]",
+              "desc": "快滑"
+            },
+            {
+              "cmd": "uitest uiInput swipe <x1> <y1> <x2> <y2> [velocity]",
+              "desc": "慢滑"
+            },
+            {
+              "cmd": "uitest uiInput drag <x1> <y1> <x2> <y2> [velocity]",
+              "desc": "拖拽"
+            },
+            {
+              "cmd": "uitest uiInput dircFling <direction>",
+              "desc": "方向滑动 (0=左 1=右 2=上 3=下)"
+            },
+            {
+              "cmd": "uitest uiInput inputText <x> <y> <text>",
+              "desc": "输入文本"
+            },
+            {
+              "cmd": "uitest uiInput keyEvent <keyName>",
+              "desc": "按键 (Home/Back)"
+            },
+            {
+              "cmd": "uitest uiInput keyEvent <keyID> [keyID2]",
+              "desc": "组合键"
+            },
+            {
+              "cmd": "uitest screenCap",
+              "desc": "默认 /data/local/tmp"
+            },
+            {
+              "cmd": "uitest screenCap -p /data/local/tmp/1.png",
+              "desc": "指定路径"
+            },
+            {
+              "cmd": "uitest dumpLayout -p /data/local/tmp/",
+              "desc": ""
+            },
+            {
+              "cmd": "uitest dumpLayout -w <FocusWinId> -p /data/local/tmp/focus_layout.json",
+              "desc": ""
+            },
+            {
+              "cmd": "uitest uiRecord record",
+              "desc": "开始录制 → /data/local/tmp/layout/record.csv"
+            },
+            {
+              "cmd": "uitest uiRecord read",
+              "desc": "读取录制"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. 系统状态与硬件探针（hidumper）",
+      "groups": [
+        {
+          "name": "5.1 基本用法",
+          "tags": [
+            "官方",
+            "社区"
+          ],
+          "items": [
+            {
+              "cmd": "hidumper -h",
+              "desc": "帮助",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "hidumper -lc",
+              "desc": "系统信息集群列表",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "hidumper -ls",
+              "desc": "系统能力（SA）列表",
+              "tags": [
+                "官方",
+                "实机"
+              ]
+            },
+            {
+              "cmd": "hidumper -s",
+              "desc": "转储所有 SA",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "hidumper -s <SA_name>",
+              "desc": "查询指定 SA",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "hidumper -s <SA_name> -a \"<args>\"",
+              "desc": "带 arguments",
+              "tags": [
+                "官方"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "5.2 核心硬件与服务查询",
+          "items": [
+            {
+              "cmd": "hidumper -s BatteryService",
+              "desc": ""
+            },
+            {
+              "cmd": "hidumper -s BatteryService -a -i",
+              "desc": "详细信息",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hidumper -s WifiDevice",
+              "desc": ""
+            },
+            {
+              "cmd": "hidumper -s WifiHotspot",
+              "desc": ""
+            },
+            {
+              "cmd": "hidumper -s WindowManagerService",
+              "desc": ""
+            },
+            {
+              "cmd": "hidumper -s NetConnManager",
+              "desc": ""
+            },
+            {
+              "cmd": "hidumper -s RenderService -a screen",
+              "desc": "分辨率、刷新率"
+            },
+            {
+              "cmd": "hidumper -s RenderService -a \"composer fps\"",
+              "desc": "帧率"
+            },
+            {
+              "cmd": "hidumper -s PowerManagerService -a -s",
+              "desc": "屏幕状态"
+            },
+            {
+              "cmd": "hidumper -s PowerManagerService -a -r",
+              "desc": "RunningLock"
+            },
+            {
+              "cmd": "hidumper -s DisplayManagerService -a -a",
+              "desc": "屏幕信息"
+            },
+            {
+              "cmd": "hidumper -s DisplayManagerService -a -f",
+              "desc": "折叠状态"
+            },
+            {
+              "cmd": "hidumper -s MemoryManagerService -a -a",
+              "desc": ""
+            },
+            {
+              "cmd": "hidumper -s MemoryManagerService -a -r",
+              "desc": ""
+            },
+            {
+              "cmd": "hidumper -s AbilityManagerService",
+              "desc": ""
+            }
+          ]
+        },
+        {
+          "name": "5.3 进程与性能",
+          "tags": [
+            "官方"
+          ],
+          "items": [
+            {
+              "cmd": "hidumper -p",
+              "desc": "所有进程",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "hidumper -p <pid>",
+              "desc": "指定进程线程",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "hidumper --cpuusage",
+              "desc": "CPU 使用率",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "hidumper --cpuusage <pid>",
+              "desc": "指定进程 CPU",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "hidumper --cpufreq",
+              "desc": "CPU 频率",
+              "tags": [
+                "官方",
+                "实机"
+              ]
+            },
+            {
+              "cmd": "hidumper --mem",
+              "desc": "内存",
+              "tags": [
+                "官方",
+                "实机"
+              ]
+            },
+            {
+              "cmd": "hidumper --mem <pid>",
+              "desc": "指定进程内存",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "hidumper --mem-smaps <pid> [-v]",
+              "desc": "smaps 详情",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "hidumper --mem-jsheap <pid> [-T <tid>] [--gc]",
+              "desc": "JS Heap",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "hidumper --net",
+              "desc": "网络",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "hidumper --net <pid>",
+              "desc": "指定进程网络",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "hidumper --storage",
+              "desc": "存储",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "hidumper --storage <pid>",
+              "desc": "指定进程存储",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "hidumper -e",
+              "desc": "崩溃历史",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "hidumper --zip",
+              "desc": "压缩输出",
+              "tags": [
+                "官方"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. 系统参数与服务控制（param / service_control）",
+      "groups": [
+        {
+          "name": "6.1 参数系统（param）",
+          "tags": [
+            "官方"
+          ],
+          "items": [
+            {
+              "cmd": "param get",
+              "desc": "获取所有参数",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "param get const.product.model",
+              "desc": "获取指定参数",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "param get | grep -E 'os|model|brand'",
+              "desc": "模糊查询",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "param set const.product.developmentmode 1",
+              "desc": "设置参数",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "param ls",
+              "desc": "列出所有参数",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "param wait <name> [value] [timeout]",
+              "desc": "等待参数",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "param dump [verbose]",
+              "desc": "dump 参数",
+              "tags": [
+                "官方"
+              ]
+            },
+            {
+              "cmd": "param save",
+              "desc": "保存参数",
+              "tags": [
+                "官方"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "6.2 系统服务控制",
+          "tags": [
+            "未验证"
+          ],
+          "items": [
+            {
+              "cmd": "service_control start <service_name>",
+              "desc": ""
+            },
+            {
+              "cmd": "service_control stop <service_name>",
+              "desc": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "7. 日志与性能跟踪（hilog / hisysevent / bytrace / SP_daemon）",
+      "groups": [
+        {
+          "name": "7.1 系统日志（hilog）",
+          "tags": [
+            "官方",
+            "社区"
+          ],
+          "items": [
+            {
+              "cmd": "hilog",
+              "desc": "实时日志",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "hilog -x",
+              "desc": "非阻塞读取",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hilog -T <tag>",
+              "desc": "按 Tag 过滤",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "hilog -L <level>",
+              "desc": "按级别过滤 (D/I/W/E/F)",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hilog -D <domain>",
+              "desc": "按域过滤",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hilog -P <pid>",
+              "desc": "按 PID 过滤",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hilog -e \"<regex>\"",
+              "desc": "正则过滤",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hilog -a <n>",
+              "desc": "头部 N 行",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hilog -z <n>",
+              "desc": "尾部 N 行",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hilog -r",
+              "desc": "清空缓冲",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "hilog -G <size>",
+              "desc": "设置缓冲大小",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hilog -g",
+              "desc": "查询缓冲大小",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hilog -v color",
+              "desc": "彩色输出",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hilog -v msec",
+              "desc": "毫秒级",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hilog -w start",
+              "desc": "持久化开始",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hilog -w stop",
+              "desc": "持久化停止",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hilog -p on/off",
+              "desc": "隐私格式化",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hilog -b <level>",
+              "desc": "全局日志级别",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hilog -s",
+              "desc": "统计信息",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "hilog -S",
+              "desc": "清除统计",
+              "tags": [
+                "社区"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "7.3 系统事件（hisysevent）",
+          "tags": [
+            "未验证"
+          ],
+          "items": [
+            {
+              "cmd": "hisysevent -l",
+              "desc": ""
+            }
+          ]
+        },
+        {
+          "name": "7.4 性能追踪（bytrace）",
+          "tags": [
+            "未验证"
+          ],
+          "items": [
+            {
+              "cmd": "bytrace -t 5 -b 4096 --overwrite ability app > /data/local/tmp/trace.ftrace",
+              "desc": ""
+            }
+          ]
+        },
+        {
+          "name": "7.5 SmartPerf（SP_daemon）",
+          "tags": [
+            "社区"
+          ],
+          "items": [
+            {
+              "cmd": "SP_daemon --help",
+              "desc": "帮助"
+            },
+            {
+              "cmd": "SP_daemon -N 20 -c -g -t -p -r -m -net -snapshot -d",
+              "desc": "采集 20 次"
+            },
+            {
+              "cmd": "SP_daemon -N 20 -PKG com.example.app -c -g -t -p -f -r -m -net -snapshot -d",
+              "desc": "指定包名"
+            },
+            {
+              "cmd": "SP_daemon -start -c",
+              "desc": "开始采集"
+            },
+            {
+              "cmd": "SP_daemon -stop",
+              "desc": "停止采集"
+            },
+            {
+              "cmd": "SP_daemon -screen",
+              "desc": "屏幕分辨率"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "9. 文件系统与进程管理（Linux / Toybox）",
+      "groups": [
+        {
+          "name": "9.1 进程管理",
+          "tags": [
+            "实机"
+          ],
+          "items": [
+            {
+              "cmd": "ps -ef",
+              "desc": "查看所有进程"
+            },
+            {
+              "cmd": "ps -ef | grep <name>",
+              "desc": "搜索进程"
+            },
+            {
+              "cmd": "kill -9 <pid>",
+              "desc": "强制结束"
+            },
+            {
+              "cmd": "pidof <name>",
+              "desc": "获取 PID"
+            },
+            {
+              "cmd": "top -n 1",
+              "desc": "CPU 使用率快照"
+            }
+          ]
+        },
+        {
+          "name": "9.2 文件操作",
+          "tags": [
+            "实机"
+          ],
+          "items": [
+            {
+              "cmd": "ls -la <path>",
+              "desc": "列出文件"
+            },
+            {
+              "cmd": "cat <file>",
+              "desc": "查看内容"
+            },
+            {
+              "cmd": "cp <src> <dst>",
+              "desc": "复制"
+            },
+            {
+              "cmd": "mv <src> <dst>",
+              "desc": "移动/重命名"
+            },
+            {
+              "cmd": "rm <file>",
+              "desc": "删除文件"
+            },
+            {
+              "cmd": "rm -rf <dir>",
+              "desc": "递归删除目录"
+            },
+            {
+              "cmd": "mkdir -p <dir>",
+              "desc": "递归创建目录"
+            },
+            {
+              "cmd": "chmod 755 <file>",
+              "desc": "修改权限"
+            },
+            {
+              "cmd": "df -h",
+              "desc": "磁盘使用"
+            },
+            {
+              "cmd": "du -sh <path>",
+              "desc": "目录大小"
+            },
+            {
+              "cmd": "find / -name <pattern>",
+              "desc": "查找文件"
+            }
+          ]
+        },
+        {
+          "name": "9.3 文本处理",
+          "items": [
+            {
+              "cmd": "grep -E 'pattern' <file>",
+              "desc": "正则过滤",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "grep -i 'pattern' <file>",
+              "desc": "忽略大小写",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "sed 's/find/replace/g' <file>",
+              "desc": "替换",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "cut -d' ' -f1 <file>",
+              "desc": "字段截取",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "head -n 20 <file>",
+              "desc": "前 20 行",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "tail -n 20 <file>",
+              "desc": "后 20 行",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "sort <file>",
+              "desc": "排序",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "uniq",
+              "desc": "去重",
+              "tags": [
+                "实机"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "9.4 数据库",
+          "tags": [
+            "未验证"
+          ],
+          "items": [
+            {
+              "cmd": "sqlite3 <db_file>",
+              "desc": ""
+            }
+          ]
+        },
+        {
+          "name": "9.5 其他常用",
+          "tags": [
+            "实机"
+          ],
+          "items": [
+            {
+              "cmd": "date",
+              "desc": "当前时间"
+            },
+            {
+              "cmd": "sleep 1",
+              "desc": "延迟"
+            },
+            {
+              "cmd": "echo \"text\" > <file>",
+              "desc": "写入文件"
+            },
+            {
+              "cmd": "echo \"text\" >> <file>",
+              "desc": "追加"
+            },
+            {
+              "cmd": "which <command>",
+              "desc": "查找命令路径"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "10. 网络诊断与端口转发",
+      "groups": [
+        {
+          "name": "10.1 设备端网络命令",
+          "tags": [
+            "社区"
+          ],
+          "items": [
+            {
+              "cmd": "ifconfig",
+              "desc": "查看网卡",
+              "tags": [
+                "实机"
+              ]
+            },
+            {
+              "cmd": "ifconfig -a",
+              "desc": "所有接口",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "ip addr",
+              "desc": "IP 地址",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "netstat -tlpn",
+              "desc": "监听端口",
+              "tags": [
+                "社区"
+              ]
+            },
+            {
+              "cmd": "ping -c 3 127.0.0.1",
+              "desc": "连通性",
+              "tags": [
+                "实机"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "11. 卓易通（ANCO）安卓沙盒穿透实战",
+      "groups": [
+        {
+          "name": "11.1 调起卓易通内隐藏的安卓系统设置",
+          "items": [
+            {
+              "cmd": "aa start -b com.android.settings -a com.android.settings.Settings\\$NotificationAccessSettingsActivity",
+              "desc": ""
+            },
+            {
+              "cmd": "aa start -b com.android.settings -a com.android.settings.Settings\\$AccessibilitySettingsActivity",
+              "desc": ""
+            },
+            {
+              "cmd": "aa start -b com.android.settings -a com.android.settings.Settings\\$SpecialAccessSettingsActivity",
+              "desc": ""
+            },
+            {
+              "cmd": "aa start -b com.android.settings -a com.android.settings.Settings\\$ManageApplicationsActivity",
+              "desc": ""
+            }
+          ]
+        },
+        {
+          "name": "11.2 穿透启动卓易通内的安卓应用",
+          "items": [
+            {
+              "cmd": "aa start -b <android_package_name> -a <main_activity_name>",
+              "desc": ""
+            },
+            {
+              "cmd": "aa start -b cn.ppps.forwarder -a cn.ppps.forwarder.activity.MainActivity",
+              "desc": ""
+            },
+            {
+              "cmd": "aa start -b org.kde.kdeconnect_tp -a org.kde.kdeconnect.UserInterface.MainActivity",
+              "desc": ""
+            }
+          ]
+        },
+        {
+          "name": "11.3 在 MacroDroid 中调用宿主特权",
+          "tags": [
+            "实机"
+          ],
+          "items": [
+            {
+              "cmd": "sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh power-shell wakeup",
+              "desc": ""
+            },
+            {
+              "cmd": "sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -T -c 630 1422",
+              "desc": ""
+            },
+            {
+              "cmd": "sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -K -d 2 -u 2",
+              "desc": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "14. 常用系统参数速查",
+      "groups": [
+        {
+          "name": "",
+          "items": [
+            {
+              "cmd": "param get | grep -E 'os.name|model|brand|version.release|cpu'",
+              "desc": ""
+            },
+            {
+              "cmd": "param get | grep -E 'development|debug'",
+              "desc": ""
+            },
+            {
+              "cmd": "param get",
+              "desc": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 /**
  * TerminalConsole — 终端控制台组件
  *
- * 提供终端输出区、命令输入框、快捷命令栏。
+ * 提供终端输出区、命令输入框、快捷命令栏，以及指令手册侧边栏。
  * 通过 BusClient 与 daemon 通信。
  *
  * 注意：BusClient 作为普通属性传递（非 @Prop/@Link），
@@ -11,12 +11,15 @@
 import { BusClient } from '../services/BusClient';
 import { CommandResult } from '../model/CommandResult';
 import { QUICK_COMMANDS, MAX_CMD_HISTORY } from '../common/Constants';
+import { CommandPanel } from './CommandPanel';
 
 @Component
 export struct TerminalConsole {
   @State output: string = 'HMArkPriv Terminal v1.0\n等待连接 daemon...\n\n';
   @State inputCmd: string = '';
   @State isExecuting: boolean = false;
+  /** 指令手册侧边栏是否展开 */
+  @State showPanel: boolean = false;
   @Link cmdHistory: string[];
   @Prop needAuth: boolean = true;
   busClient: BusClient = new BusClient();
@@ -24,7 +27,81 @@ export struct TerminalConsole {
   private scroller: Scroller = new Scroller();
 
   build() {
+    Stack({ alignContent: Alignment.TopEnd }) {
+      this.TerminalMain()
+
+      // ===== 指令手册侧边栏（覆盖层）=====
+      if (this.showPanel) {
+        // 半透明遮罩：点击关闭
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#00000099')
+          .onClick(() => {
+            this.showPanel = false;
+          })
+
+        // 面板本体
+        Column() {
+          CommandPanel({
+            onPick: (cmd: string) => {
+              this.inputCmd = cmd;
+              this.showPanel = false;
+            },
+            onClose: () => {
+              this.showPanel = false;
+            },
+          })
+        }
+        .width('86%')
+        .height('100%')
+      }
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  TerminalMain() {
     Column() {
+      // ===== 工具条 =====
+      Row() {
+        Text('$ 终端')
+          .fontSize(12)
+          .fontColor('#64748B')
+          .fontFamily('JetBrains Mono, Consolas, monospace')
+          .layoutWeight(1)
+
+        // 指令手册入口
+        Row() {
+          Text('📖')
+            .fontSize(12)
+          Text(' 指令手册')
+            .fontSize(11)
+            .fontColor('#82B1FF')
+        }
+        .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+        .backgroundColor('#1E293B')
+        .borderRadius(12)
+        .margin({ right: 6 })
+        .onClick(() => {
+          this.showPanel = true;
+        })
+
+        // 清屏
+        Text('清屏')
+          .fontSize(11)
+          .fontColor('#64748B')
+          .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+          .backgroundColor('#1E293B')
+          .borderRadius(12)
+          .onClick(() => {
+            this.output = '';
+          })
+      }
+      .width('100%')
+      .padding({ left: 4, right: 4, bottom: 6 })
+
       // ===== 终端输出区 =====
       Scroll(this.scroller) {
         Text(this.output)
