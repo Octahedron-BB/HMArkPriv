@@ -1,0 +1,10 @@
+{
+  "color": [
+    { "name": "start_window_background", "value": "#0D1527" },
+    { "name": "bg_main", "value": "#0D1527" },
+    { "name": "bg_card", "value": "#1A2332" },
+    { "name": "bg_input", "value": "#0F172A" },
+    { "name": "text_primary", "value": "#E2E8F0" },
+    { "name": "text_secondary", "value": "#94A3B8" }
+  ]
+}

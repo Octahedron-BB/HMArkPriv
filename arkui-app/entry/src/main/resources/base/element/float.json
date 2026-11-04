@@ -1,0 +1,15 @@
+{
+  "float": [
+    { "name": "text_size_xs", "value": "10vp" },
+    { "name": "text_size_sm", "value": "12vp" },
+    { "name": "text_size_md", "value": "14vp" },
+    { "name": "text_size_lg", "value": "16vp" },
+    { "name": "text_size_xl", "value": "20vp" },
+    { "name": "radius_sm", "value": "4vp" },
+    { "name": "radius_md", "value": "8vp" },
+    { "name": "radius_lg", "value": "12vp" },
+    { "name": "padding_sm", "value": "8vp" },
+    { "name": "padding_md", "value": "12vp" },
+    { "name": "padding_lg", "value": "16vp" }
+  ]
+}

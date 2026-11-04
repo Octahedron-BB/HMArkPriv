@@ -1,0 +1,14 @@
+{
+  "string": [
+    { "name": "module_desc", "value": "HMArkPriv Shell 提权工具" },
+    { "name": "entry_desc", "value": "HMArkPriv 主入口" },
+    { "name": "entry_label", "value": "HMArkPriv" },
+    { "name": "perm_media_reason", "value": "访问 Download/HMArkPriv 目录下的文件总线（cmd.req/cmd.res/status.json），用于与 daemon 通信" },
+    { "name": "perm_download_reason", "value": "直接读写 Download 目录下的 HMArkPriv 总线文件，与 daemon 交换命令和结果，无需每次手动选择文件夹" },
+    { "name": "tab_home", "value": "首页" },
+    { "name": "tab_terminal", "value": "终端" },
+    { "name": "tab_apps", "value": "应用" },
+    { "name": "tab_touch", "value": "触控" },
+    { "name": "tab_system", "value": "系统" }
+  ]
+}

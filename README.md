@@ -1,138 +1,161 @@
-# HMArkPriv (鸿蒙特权 Shell 执行桥梁)
+# HMArkPriv
 
-<p align="center">
-  <b>轻量 · 纯粹 · 零功耗 · 免签名免 HAP 的 HarmonyOS 7.0 (NEXT) 特权 Shell 工具</b>
-</p>
+> 鸿蒙（HarmonyOS NEXT）特权 Shell 执行桥梁 —— 让普通 App 获得 UID 2000 的 shell 能力。
 
----
+鸿蒙的沙箱机制禁止普通 App spawn shell 进程。本项目通过**文件总线 + 外部 daemon** 绕开这一限制：
+一个由 `hdc` 部署的 `daemon.sh`（运行在 UID 2000）监听公共目录，App 把命令写成文件投递过去，
+daemon 执行后把结果写回，App 读回来展示。
 
-## 📌 项目定位
-
-**HMArkPriv** 参照 Android 平台经典权限管理工具 **Shizuku** 的核心理念，由 **Gemini** 针对纯血鸿蒙（HarmonyOS NEXT / 5.0+ / 7.0，HongMeng 微内核）特性量身开发。
-
-我们摒弃了复杂、高耗电的后台轮询模块，回归最纯粹的本质：**为用户及第三方应用（如卓易通安卓沙盒内的 MacroDroid、MT 管理器等）提供一个超轻量、零常驻损耗、即调即用的宿主特权 Shell (UID 2000) 执行环境与官方指令集指南。**
-
----
-
-## ✨ 核心特性
-
-* ⚡ **零后台损耗 (Zero Overhead)**：无任何定时轮询循环，纯事件触发（Event-Driven），不占 CPU，零耗电。
-* 🛡️ **免 Root / 免签名 / 免 HAP**：基于鸿蒙原生开发者通信机制与跨沙盒共享总线，开箱即用。
-* 🖥️ **本地 Web 终端控制台**：双击 `HMArkPriv_Console.html` 即可在手机浏览器中通过 File System Access API 直连宿主特权终端。
-* 📱 **容器跨界联动**：在卓易通 (ANCO) 容器内（如 MacroDroid Shell 动作）仅需调用 `sh hmpriv_cli.sh <command>` 即可穿透沙盒执行宿主特权指令。
-* 📖 **权威指令指南**：随项目附带详尽的 [《HarmonyOS Shell 指令全集与特权操作指南》](docs/HARMONYOS_SHELL_GUIDE.md)。
+```
+┌─────────────────┐   写 cmd.req     ┌──────────────────┐
+│  HMArkPriv App  │ ───────────────► │  daemon.sh       │
+│  (ArkUI, 沙箱)  │                  │  (UID 2000 shell)│
+│                 │ ◄─────────────── │                  │
+└─────────────────┘   读 cmd.res     └──────────────────┘
+                            ▲
+                    公共目录（文件总线）
+```
 
 ---
 
-## 📂 项目结构
+## 本项目包含两套方案
 
-```text
+| 方案 | 位置 | 形态 | 适用场景 |
+|------|------|------|----------|
+| **A. ArkUI 原生 App** | [`arkui-app/`](arkui-app/) | HarmonyOS 原生应用（ArkTS + ArkUI） | 日常使用，有完整 UI，终端 + 快捷面板 |
+| **B. 脚本 + Web 控制台** | [`core/`](core/) [`client/`](client/) [`console/`](console/) | Shell 脚本 + HTML 页面 | 快速上手、嵌入式调用、自动化脚本 |
+
+两套方案**共用同一个 daemon 和同样的文件总线协议**，可以自由组合
+（例如用 App 的 UI，同时保留 `hmpriv_cli.sh` 给自动化脚本调用）。
+
+### 我该选哪个？
+
+- **想直接装个 App 用** → 方案 A，见 [`arkui-app/README.md`](arkui-app/README.md)
+- **只想在手机上跑几条特权命令** → 方案 B，见 [`docs/shell-solution-README.md`](docs/shell-solution-README.md)
+- **要在 MacroDroid / Termux / 自动化工具里调用** → 方案 B 的 `client/hmpriv_cli.sh`
+
+---
+
+## 快速开始（3 步）
+
+### 1. 部署 daemon（两种方案都需要）
+
+```bash
+# 手机：用文件管理建目录 Download/HMArkPriv
+
+# 电脑：推送并启动 daemon
+hdc file send core/daemon.sh /data/local/tmp/hmpriv/daemon.sh
+hdc shell "chmod 755 /data/local/tmp/hmpriv/daemon.sh"
+hdc shell "sh /data/local/tmp/hmpriv/daemon.sh &"
+
+# 验证
+hdc shell "cat /storage/media/100/local/files/Docs/Download/HMArkPriv/status.json"
+# 期望：{"framework":"HMArkPriv","status":"ready","pid":1234,"uid":2000}
+```
+
+> ⚠️ `daemon.sh` 必须是 **LF 换行**。Windows 上 checkout 的是 CRLF，推送前先
+> `tr -d '\r' < core/daemon.sh > daemon_lf.sh`，否则报 `syntax error: unmatched 'if'`。
+
+### 2. 选用一套客户端
+
+**方案 A — 装 App**（模拟器免签名，真机需签名）：
+
+```bash
+cd arkui-app && ./build.sh          # 产出 entry-default-unsigned.hap
+hdc install -r entry/build/default/outputs/default/entry-default-unsigned.hap
+hdc shell "aa start -b com.octahedron.hmpriv -a EntryAbility"
+```
+
+打开 App 即自动连通（无需选目录、无需额外授权），终端里输入 `id` 应返回 `uid=2000(shell)`。
+
+**方案 B — 命令行客户端**：
+
+```bash
+hdc shell "sh /data/local/tmp/hmpriv/hmpriv_cli.sh id"
+# 或把 client/hmpriv_cli.sh 推到手机，在 MT 管理器 / Termux 里调用
+```
+
+### 3. 验证
+
+```bash
+id      # uid=2000(shell) gid=2000(shell) groups=...,1006(file_manager)...
+```
+
+---
+
+## 文件总线协议
+
+目录：`Download/HMArkPriv/`（App 视角：`/storage/Users/currentUser/Download/HMArkPriv`）
+
+| 文件 | 方向 | 格式 |
+|------|------|------|
+| `cmd.req` | 客户端 → daemon | `reqId\|command\n` |
+| `cmd.res` | daemon → 客户端 | `ID:reqId RC:code TIME:timestamp\n<output>` |
+| `status.json` | daemon → 客户端 | `{"framework":"HMArkPriv","status":"ready","pid":N,"uid":2000}` |
+
+> **关键**：App 和 daemon 看到的是**同一批文件的两个挂载视图**。
+> App 用 `/storage/Users/currentUser/...`（沙箱虚拟路径，无需授权），
+> daemon 用 `/storage/media/100/local/files/Docs/Download/...`（真实路径）。
+> 详见 [`arkui-app/README.md`](arkui-app/README.md) 的架构章节。
+
+轮询间隔 50 ms，超时 5 s（daemon 内部对单条命令加 `timeout 30` 兜底，防止流式命令拖死总线）。
+
+---
+
+## 文档索引
+
+| 文档 | 内容 |
+|------|------|
+| [`arkui-app/README.md`](arkui-app/README.md) | ArkUI App 完整说明：架构、编译、模拟器调试、踩坑记录 |
+| [`arkui-app/docs/HMArkPriv-App-技术方案.md`](arkui-app/docs/HMArkPriv-App-技术方案.md) | App 技术设计（IPC、页面、6 阶段开发路径） |
+| [`docs/Shell指令验证报告.md`](docs/Shell指令验证报告.md) | **Shell 指令实测报告**：逐条 RC + 输出，含输出捕获能力三分类 |
+| [`docs/HarmonyOS-Shell-指令全集.md`](docs/HarmonyOS-Shell-指令全集.md) | Shell 指令手册（`[官方]`/`[社区]`/`[实机]`/`[未验证]` 四级来源标注） |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 鸿蒙 7.0 安全机制逆向分析 |
+| [`docs/DEVLOG.md`](docs/DEVLOG.md) | 5 阶段研发日志（真机 Pura 70 Pro+） |
+| [`docs/shell-solution-README.md`](docs/shell-solution-README.md) | 方案 B（脚本 + Web 控制台）详细说明 |
+
+---
+
+## 目录结构
+
+```
 HMArkPriv/
 ├── core/
-│   └── daemon.sh              # 宿主轻量 Shell 服务端 (运行于 UID 2000)
+│   └── daemon.sh              # 特权 shell 服务端（UID 2000）
 ├── client/
-│   └── hmpriv_cli.sh          # 跨沙盒命令行执行客户端
+│   ├── hmpriv_cli.sh          # 命令行客户端
+│   └── hmshell                # 交互式终端机
 ├── console/
-│   └── HMArkPriv_Console.html # 原生响应式 Web Shell 控制台
-├── docs/
-│   └── HARMONYOS_SHELL_GUIDE.md # 鸿蒙 Shell 指令全集与特权操作指南
-├── install_and_start.sh       # 电脑端一键部署与服务启动脚本
-└── README.md
+│   └── HMArkPriv_Console.html # Web 控制台
+├── app/
+│   └── HMArkPriv_Terminal.apk # 卓易通容器内的独立 APK
+├── install_and_start.sh        # hdc 一键部署脚本
+├── arkui-app/                  # HarmonyOS 原生 App（方案 A）
+│   ├── entry/                  # 主模块（ArkTS 源码）
+│   ├── AppScope/
+│   ├── build.sh                # 命令行构建脚本
+│   └── README.md               # App 详细说明
+├── docs/                       # 文档
+└── LICENSE
 ```
 
 ---
 
-## 🚀 快速开始
+## 已验证环境
 
-### 1. 电脑端部署 (通过 USB / 无线 HDC)
+| 项目 | 版本 |
+|------|------|
+| 目标系统 | HarmonyOS NEXT 7.0.0.107 |
+| API Level | 26 |
+| 模拟器 | Mate 70 Pro+（x86_64） |
+| 开发工具 | DevEco Studio 26.0.0 Release |
+| 真机参考 | Pura 70 Pro+ (HBN-AL80) |
 
-手机开启【开发者选项】并开启【USB 调试】连接电脑，在电脑终端运行：
-
-```bash
-cd HMArkPriv
-./install_and_start.sh
-```
-
-脚本将自动完成环境预热，并在手机后台启动轻量特权 Shell 服务端。
-
----
-
-### 2. 使用方式一：手机本地浏览器 Web 控制台
-
-1. 在手机上打开【文件管理】 ➔ 【内部存储】 ➔ 【Download】 ➔ 【HMArkPriv】；
-2. 点击打开 **`HMArkPriv_Console.html`**；
-3. 点击 **“🔗 连接总线”**，在弹出的系统目录选择器中选中当前 `HMArkPriv` 文件夹并授予权限；
-4. 即可在浏览器中直接执行任意宿主 Shell 指令，并内置了唤醒屏幕、常亮设置、通知使用权、硬件探针等常用快捷预设。
+**Phase 1 验收已通过**：App 内 `id` → `uid=2000(shell)`，往返 172 ms；
+`hidumper -s BatteryService` → 真实电池信息，392 ms（模拟器实测）。
 
 ---
 
-### 3. 使用方式二：交互式特权终端机 (`hmshell`) —— 强烈推荐！
+## 开源许可
 
-利用手机现有的 **MT 管理器**（或 Termux）内置终端，直接进入交互式特权 Shell，享受**极速响应、无浏览器卡顿、完整彩色输出**的原生终端机体验：
-
-1. 打开 **MT 管理器** ➔ 左上角侧边栏 ➔ 点击 **【终端】**；
-2. 输入以下命令并回车：
-   ```bash
-   sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmshell
-   ```
-3. 立即进入 **`[HMArkPriv:shell]# `** 特权终端提示符！
-   * 支持任意鸿蒙 Shell 指令即输即出（延迟 < 50ms）；
-   * 支持快捷别名：输入 `wakeup`（唤醒屏幕）、`battery`（查看电池电量）、`hotspot`（开关热点）、`apps`（已装应用）、`notification`（打开通知使用权）、`help`（查看指南）；
-   * 支持查看完整的 stderr 报错与 exit code，不丢失任何日志；
-   * 可在 MT 管理器中点击右上角“创建快捷方式”直接添加到手机桌面，一键秒开！
-
----
-
-### 4. 使用方式三：在卓易通自动化工具中单行调用 (MacroDroid / 脚本)
-
-在卓易通安卓容器内（如 MacroDroid 的“Shell 脚本”动作），直接调用：
-
-```bash
-sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh <你要执行的指令>
-```
-
-#### 实用调用示例：
-
-* **唤醒手机屏幕**：
-  ```bash
-  sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh power-shell wakeup
-  ```
-* **屏幕常亮 1 小时**：
-  ```bash
-  sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh power-shell timeout -o 3600000
-  ```
-* **一键调出卓易通内隐藏的“通知使用权”设置**：
-  ```bash
-  sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh aa start -b com.android.settings -a com.android.settings.Settings\\\$NotificationAccessSettingsActivity
-  ```
-* **硬件级点击屏幕坐标 (630, 1422)**：
-  ```bash
-  sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -T -c 630 1422
-  ```
-* **模拟返回键**：
-  ```bash
-  sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -K -d 2 -u 2
-  ```
-
----
-
-## 📚 鸿蒙 Shell 指令全集
-
-鸿蒙微内核系统内置了丰富的原生诊断与管理工具，完整命令语法、参数解释与实战范例请参阅：
-
-👉 **[查看完整指南：docs/HARMONYOS_SHELL_GUIDE.md](docs/HARMONYOS_SHELL_GUIDE.md)**
-
-涵盖核心模块：
-1. **应用与能力管理 (`aa`, `bm`)**：启动应用、杀进程、查包名、任务栈分析。
-2. **电源与屏幕管理 (`power-shell`, `snapshot_display`)**：唤醒、熄屏、超时常亮、底层截屏。
-3. **触控与输入模拟 (`uinput`, `sendevent`)**：硬件级坐标点击、滑动手势、物理按键注入。
-4. **硬件状态探针 (`hidumper`)**：电池温度/充放电、个人热点、窗口焦点、CPU 频率。
-5. **系统参数 (`param`)**：读取硬件型号、系统发行版本号与平台配置。
-6. **安卓沙盒穿透**：调起卓易通内部隐藏设置（通知使用权、无障碍等）。
-
----
-
-## 📄 开源许可
-
-本项目基于 [MIT License](LICENSE) 开源。
-参考 Android 平台 Shizuku 理念设计，由 Gemini 开发。
+见 [LICENSE](LICENSE)。

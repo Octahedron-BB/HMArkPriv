@@ -1,15 +1,29 @@
-.DS_Store
-*.swp
-*.bak
-*.tmp
+# ===== 项目运行产物（原 shell 方案）=====
 daemon.pid
 daemon.log
 hmpriv.log
 adskip.log
 keepawake.log
 sms.log
-sms_latest.json
-cmd.req
-cmd.res
-status.json
-focus_layout.json
+*.swp
+*.bak
+*.tmp
+.DS_Store
+Thumbs.db
+
+# ===== ArkUI 工程构建产物 =====
+arkui-app/build/
+arkui-app/entry/build/
+arkui-app/.hvigor/
+arkui-app/.cxx/
+arkui-app/.ohpm/
+arkui-app/node_modules/
+arkui-app/entry/node_modules/
+
+# ===== 开发工具本地配置 =====
+.idea/
+arkui-app/.idea/
+arkui-app/local.properties
+.workbuddy-ai/
+arkui-app/scripts/verify-result.md
+.tmp/
