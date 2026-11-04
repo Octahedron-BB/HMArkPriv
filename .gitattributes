@@ -1,0 +1,40 @@
+# ===== 换行符规范 =====
+#
+# 为什么需要这个文件：
+#   Windows 上 core.autocrlf=true 会把 checkout 出来的文本转成 CRLF。
+#   Shell 脚本一旦是 CRLF，`sh` 解析会直接报 "syntax error: unmatched 'if'"，
+#   而本项目所有脚本都要用 `hdc file send` 原样推到手机上执行，所以必须强制 LF。
+#
+# 统一后：仓库内和任何平台 checkout 出来的 .sh 都是 LF，无需手动 `tr -d '\r'`。
+
+* text=auto
+
+# Shell 脚本必须 LF
+*.sh      text eol=lf
+*.bash    text eol=lf
+client/hmshell  text eol=lf
+
+# Windows 批处理必须 CRLF
+*.bat     text eol=crlf
+*.cmd     text eol=crlf
+*.ps1     text eol=crlf
+
+# 源码与文档统一 LF
+*.ets     text eol=lf
+*.ts      text eol=lf
+*.json    text eol=lf
+*.json5   text eol=lf
+*.md      text eol=lf
+*.c       text eol=lf
+*.h       text eol=lf
+
+# 二进制文件不做换行处理
+*.hap     binary
+*.apk     binary
+*.exe     binary
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.gz      binary
+*.zip     binary

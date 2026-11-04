@@ -831,8 +831,9 @@ hdc tconn 127.0.0.1:5556
 > | 包名 | 是什么 | 用途 |
 > |------|--------|------|
 > | `com.zhuoyi.appstore.lite` | 卓易通 App 本体（鸿蒙侧） | 用户点开的应用，有「发现/应用/我的」三个 Tab |
-> | `com.droi.tong` | 容器相关包 | 在 `bm dump -a` 列表里出现，但启动它不会有界面 |
-> | `com.easy.hmos.abroad` | 出境易（鸿蒙侧） | 另一款容器 App |
+> | `com.droi.tong` | 卓易通的安装包名 | 用 `aa start -b com.droi.tong -a EntryAbility` 拉起它 |
+> | `com.easy.hmos.abroad` | 出境易的安装包名 | 用 `aa start -b com.easy.hmos.abroad -a EntryAbility` 拉起 |
+> | `com.easy.abroad` | 出境易运行时的 UI 进程名 | `uitest dumpLayout` 显示的是这个，两个名字指同一个 App |
 > | `com.android.settings` | 容器内的安卓设置 | 靠 `aa start` 穿透进去，本文重点 |
 >
 > 检测设备是否装了卓易通，用 `bm dump -a | grep -c com.zhuoyi.appstore` 或
@@ -882,9 +883,31 @@ aa start -b com.android.settings -a "com.android.settings.Settings\$ManageApplic
 
 | 命令 | 界面能看到什么 | 典型用途 | 实测 |
 |------|--------------|---------|------|
-| 通知使用权 | 容器内安卓应用列表，可逐个授予"读取通知"权限 | 给短信转发器、通知转发类 App 授权 | ✅ 可重复打开 |
+| 通知使用权 | 容器内安卓应用列表，可逐个授予"读取通知"权限 | 给需要读取通知的工具类 App 授权 | ✅ 可重复打开 |
 | 特殊访问权限 | 悬浮窗 / 媒体管理应用 / 修改系统设置 / 通知使用权 / 闹钟和提醒 / 使用情况访问权限 / WLAN 控制 | 给投屏、自动化工具授予悬浮窗或改设置权限 | ✅ 7 个条目完整列出 |
 | 已装应用列表 | 容器内应用清单（名称+大小），点进去可卸载/强停/看权限 | 管理容器内应用 | ✅ 需等约 10 秒渲染 |
+
+**出境易同样适用（命令完全不用改）**
+
+出境易是另一款安卓容器 App，和卓易通共用同一个 ANCO 运行时，
+所以 11.1 / 11.2 / 11.3 的命令对它一模一样，只需要先把它切到前台：
+
+```bash
+aa start -b com.easy.hmos.abroad -a EntryAbility   # 打开出境易
+```
+
+实测对比（先打开出境易，再执行上面的穿透命令）：
+
+| 命令 | 结果 |
+|------|------|
+| 通知使用权 | ✅ 正常打开，标题「通知使用权」，列出容器内应用 |
+| 特殊访问权限 | ✅ 正常打开，7 个条目完整 |
+| 应用列表 | ✅ 正常打开，列出应用名和大小 |
+
+> **为什么两个 App 能共用同一套命令**：它们都是 ANCO 容器架构的宿主，底层都依赖
+> `rgm_hmos` / `isulad` 提供的容器运行时。宿主侧的 `aa start -b com.android.settings`
+> 由系统按**当前活动的那个容器**路由进去，所以命令里不需要区分是哪个宿主，
+> 只要保证目标容器在前台就行。
 
 > **无障碍（AccessibilitySettingsActivity）已从手册移除** —— 2026-11-04 穷举验证确认
 > 这条路完全不可达：
@@ -933,7 +956,8 @@ uinput -K -d 1 -u 1                            # 按 Home 键
 > 区别是这里的 `-b` 写容器内**安卓应用的包名**，不是 `com.android.settings`。
 
 ```bash
-aa start -b <android_package_name> -a <main_activity_name>   # 启动容器内任意安卓应用
+aa start -b com.aistra.hail -a com.aistra.hail.ui.main.MainActivity   # 实测可用的完整例子
+aa start -b com.easy.hmos.abroad -a EntryAbility                      # 拉起出境易本体
 ```
 
 **参数说明**：
@@ -943,98 +967,132 @@ aa start -b <android_package_name> -a <main_activity_name>   # 启动容器内�
 | `-b <android_package_name>` | 容器内安卓应用的包名，形如 `com.example.app` |
 | `-a <main_activity_name>` | 该应用的主 Activity，形如 `com.example.app.MainActivity` |
 
+> **两个参数都必填**。只给 `-b`（或改用 `-U package:xxx`）会直接报
+> `10103101 Failed to find a matching application for implicit launch` ——
+> 因为容器包不在鸿蒙 `bm` 里，隐式匹配必然落空。包名和 Activity 怎么拿见 **11.3**。
+>
 > **这类命令不需要 `$` 转义**（普通应用的主 Activity 名不含 `$`），
 > 只有 `com.android.settings` 那种内部类 Activity 才需要（见 11.1）。
 >
-> **Activity 名写错不会报错**（`aa` 永远返回 RC=0），只会退回桌面。
-> 验证方法：启动后等 5-6 秒，`uitest dumpLayout` 导出控件树，
-> 看 `bundleName` 是否变成目标包名（若仍是 `com.ohos.sceneboard` 说明失败）。
-
----
-
-### 11.3 查询容器内已安装的应用
-
-> **[实机验证 2026-11-04]** 用容器内安卓设置的应用管理页，可以看到容器里装了什么。
-
-```bash
-aa start -b com.android.settings -a "com.android.settings.Settings\$ManageApplicationsActivity"   # 容器内应用列表
-```
-
-**实测看到的内容**（等约 10 秒渲染完）：
-
-```
-应用管理
-├── 搜索应用
-├── 雹                4.56 MB
-├── 出境服务框架       567 MB
-├── 出境服务助手       10.09 MB
-├── 短信转发器         105 MB
-└── 高德地图           16.38 kB
-...
-```
-
-点任意应用可进入「应用信息」页，能看到：
-
-- 版本号（如 `版本 3.5.0.260224`）
-- 卸载 / 强行停止
-- 通知管理
-- 各项权限的当前授权状态（位置信息、相机、麦克风、通讯录、日历、电话、信息、通话记录、附近设备…）
-
-**其他入口**：11.1 的「通知使用权」和「特殊访问权限」页也能看到容器内应用列表，
-但那两个页面只列出与权限相关的应用子集，想看全部已装应用用上面的应用管理页。
-
-> **为什么等待时间要这么长**：容器内 Activity 首次启动需要先拉起安卓运行时，
-> 实测冷启动 8-10 秒才渲染完。等 3-4 秒就 dumpLayout 会误判成"打不开"。
-
-> **关于包名**：这三个页面**只显示应用的中文名，不显示包名**。
-> 容器内的安卓包名无法从鸿蒙 shell 侧查询（`bm dump -a` 里没有，
-> `bm dump -n <android_pkg>` 也报 not found）。
->
-> 要拿到包名，只能从 APK 文件反查（在电脑上执行）：
+> **怎么确认真的启动了**：`aa start` 返回的 RC 不能当依据（参数不全时会报错，
+> 但 Activity 名写错时可能仍返回成功）。正确做法是启动后等 4-6 秒，
+> `uitest dumpLayout` 导出控件树，看 `bundleName` 是否变成目标包名
+> （若仍是 `com.ohos.sceneboard` 说明失败）：
 > ```bash
-> # 方法一：aapt（Android SDK build-tools 里自带）
-> aapt dump badging app.apk | grep -E "^package|launchable-activity"
-> # 输出示例：
-> #   package: name='com.example.app' versionCode='1' ...
-> #   launchable-activity: name='com.example.app.MainActivity' ...
->
-> # 方法二：用 apktool 解包看 AndroidManifest.xml
-> apktool d app.apk -o out && grep -E "package=|android:name" out/AndroidManifest.xml | head -5
+> uitest dumpLayout -p /data/local/tmp/ui.json >/dev/null 2>&1; grep -o '"bundleName":"[^"]*"' /data/local/tmp/ui.json | sort -u
 > ```
-> 拿到包名和 Activity 后，用 11.2 的语法就能启动它。
 
 ---
 
-### 11.4 出境易同样适用
+### 11.3 获取容器内应用的包名 + Activity 名
 
-> **[实机验证 2026-11-04]** 出境易是另一款安卓容器 App，
-> **11.1 / 11.2 / 11.3 的所有命令对它一样有效**，命令完全不用改。
+> **[实机验证 2026-11-04]** 这是 11.2 的**前置步骤** —— 不拿到这两个名字，什么都启动不了。
+
+**先说清一个硬规则**（实测踩过）：`aa start` 的 `-b` 和 `-a` **两个都必须给**。
+
+> 只给包名、或用隐式 URI 形式（`-U` 后面跟 `package:包名`）都不行，
+> 一律报 `10103101 Failed to find a matching application for implicit launch` ——
+> 因为容器内的安卓包不在鸿蒙 `bm` 里，`aa` 的隐式匹配必然落空。
+>
+> | 写法 | 结果 |
+> |------|------|
+> | 只给 `-b` 包名 | ✗ 10103101 |
+> | `-U package:包名`（隐式 URI） | ✗ 10103101 |
+> | `-b` 包名 + `-a` Activity | ✓ 成功 |
 
 ```bash
-aa start -b com.easy.hmos.abroad -a EntryAbility   # 打开出境易
+aa start -b com.aistra.hail -a com.aistra.hail.ui.main.MainActivity   # 唯一能成功的写法
 ```
 
-**验证过程**：先打开出境易，再执行 11.1 的穿透命令，结果与卓易通一致：
+所以下面四条方法都是为了凑齐「包名 + Activity 名」这一对。
 
-| 命令 | 结果 |
-|------|------|
-| 通知使用权 | ✅ 正常打开，标题「通知使用权」，列出容器内应用 |
-| 特殊访问权限 | ✅ 正常打开，7 个条目完整 |
-| 应用列表 | ✅ 正常打开，列出应用名和大小 |
+#### 方法 A：从系统日志抓成对（推荐，一次拿全）
 
-**包名对照（实测）**：
+容器内应用每次**真正启动**，宿主 AMS 都会打一行 `StartAbility 包名/Activity名`。
+先清空缓冲再打开应用，结果最干净：
 
-| 包名 | 是什么 | 说明 |
-|------|--------|------|
-| `com.easy.hmos.abroad` | 出境易的安装包（`bm dump -n` 可查到这个） | 启动它用 `-a EntryAbility` |
-| `com.easy.abroad` | 出境易实际运行时的 UI 进程名（`dumpLayout` 显示这个） | 两个名字都指向同一个 App |
-| `com.droi.tong` | 卓易通的安装包 | 启动它用 `-a EntryAbility` |
-| `com.zhuoyi.appstore.lite` | 卓易通实际运行时的 UI 进程名 | — |
+```bash
+hilog -r    # ① 清空日志缓冲
+# ② 从卓易通里点开目标应用，等它出现界面
+hilog -x 2>/dev/null | grep -oE 'StartAbility [A-Za-z0-9_.]+/[A-Za-z0-9_.$]+' | sort -u   # ③ 读出成对结果
+```
 
-> **为什么两个 App 能共用同一套命令**：它们都是 ANCO 容器架构的宿主，
-> 底层都依赖 `rgm_hmos` / `isulad` 提供的容器运行时。
-> 宿主侧的 `aa start -b com.android.settings` 由系统按当前活动的容器路由进去，
-> 所以不需要区分是哪个宿主。
+实测输出（就一行，直接可用）：
+
+```
+StartAbility com.aistra.hail/com.aistra.hail.ui.main.MainActivity
+```
+
+把斜杠前后两半分别填进 11.2 的 `-b` 和 `-a` 即可。
+
+> **抓不到怎么办**：这条日志只在**真正新建窗口**时打。
+> 应用从后台切回前台、或本来就停在那个界面，都不会打。
+> 先 `uinput -K -d 1 -u 1`（回桌面）退出应用，再重新点开一次。
+>
+> **别名情况**：部分应用的 Activity 前缀和包名不一致，例如
+> `org.kde.kdeconnect_tp` 的入口是 `org.kde.kdeconnect.UserInterface.MainActivity`。
+> 所以不要自己拼 Activity 名，用日志里成对出现的那个。
+
+#### 方法 B：读前台窗口的 bundleName（确认用，最稳）
+
+不限启动方式，只要应用在前台就能读到它的包名：
+
+```bash
+uitest dumpLayout -p /data/local/tmp/pkg.json >/dev/null 2>&1; grep -o '"bundleName":"[^"]*"' /data/local/tmp/pkg.json | sort -u   # 前台应用的包名
+```
+
+实测输出：
+
+```
+"bundleName":"com.aistra.hail"
+"bundleName":"com.ohos.sceneboard"
+```
+
+`com.ohos.sceneboard` 是桌面（常驻图层），**另一个就是当前前台应用的包名**。
+缺点：只给包名，拿不到 Activity 名。
+
+> `dumpLayout` 的输出路径必须用 `/data/local/tmp/` 这类 shell 可写目录，
+> 写 `/sdcard`（hmdfs）会因为 shell 无 create 权限而失败。
+
+#### 方法 C：批量扫（找候选池）
+
+想一次看一批，可以扫实时缓冲或滚动落盘的日志：
+
+```bash
+# 实时缓冲
+hilog -x 2>/dev/null | grep -oE 'StartAbility [A-Za-z0-9_.]+/[A-Za-z0-9_.$]+' | sort -u
+
+# 历史日志（shell 可读，能翻到几十分钟前）
+gzip -dc /data/log/hilog/hilog.*.gz 2>/dev/null | grep -oE 'StartAbility [A-Za-z0-9_.]+/[A-Za-z0-9_.$]+' | sort -u   # 历史候选池
+```
+
+历史日志里会混进鸿蒙原生应用的启动记录（日志本身不区分来源），
+所以它只适合当候选池，命中后仍要用方法 A/B 确认一次。
+
+#### 方法 D：从 APK 反查（电脑端，最确定）
+
+```bash
+# aapt（Android SDK build-tools 自带）
+aapt dump badging app.apk | grep -E "^package|launchable-activity"
+#   package: name='com.example.app' versionCode='1' ...
+#   launchable-activity: name='com.example.app.MainActivity' ...
+
+# 或者 apktool 解包看 AndroidManifest.xml
+apktool d app.apk -o out && grep -E "package=|android:name" out/AndroidManifest.xml | head -5
+```
+
+> **为什么容器包名在鸿蒙侧查不到**：安卓包管理活在容器自己的 PID / mount namespace 里
+> （`isulad` + `lxc-start` 拉起的独立环境），宿主 `bm` 只认鸿蒙自己的 HAP ——
+> `bm dump -a` 列表里没有容器包，`bm dump -n <android_pkg>` 报 not found。
+> 容器数据目录 `/data/virt_service/rgm_hmos/anco_hmos_data` 被 SELinux 完全隔离，
+> `ls` 和 `hdc file recv` 都是 `Permission denied`。
+> **日志和前台窗口是仅有的两个能从宿主侧"看到"容器包名的通道**。
+
+#### 附：11.1 那个应用管理页能看什么
+
+11.1 的 `ManageApplicationsActivity` 是容器内安卓设置的应用列表，
+能看到**应用中文名 + 占用空间**，点进去还有版本号、卸载、强停、通知管理、权限状态。
+但它**不显示包名**——想知道包名还是要用上面四条方法。
 
 ---
 

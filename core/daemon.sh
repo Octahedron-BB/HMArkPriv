@@ -93,8 +93,8 @@ process_slots() {
 
         # -s 判断非空。空文件说明没有请求，跳过
         if [ -s "${SLOT_REQ}" ]; then
-            # 读取命令（去掉首尾换行）
-            SLOT_CMD=$(cat "${SLOT_REQ}" 2>/dev/null | head -n 1)
+            # 读取命令（支持多行，用 cat 读全量而不是 head -n 1）
+            SLOT_CMD=$(cat "${SLOT_REQ}" 2>/dev/null)
 
             # 立刻清空请求槽，允许调用方写入下一条
             printf "" > "${SLOT_REQ}" 2>/dev/null
@@ -114,16 +114,29 @@ process_slots() {
 while true; do
     # ---- 协议 1：单文件（兼容旧客户端）----
     if [ -s "${REQ_FILE}" ]; then
-        RAW_LINE=$(head -n 1 "${REQ_FILE}" 2>/dev/null)
-        if [ -n "${RAW_LINE}" ]; then
-            REQ_ID=$(echo "${RAW_LINE}" | cut -d'|' -f1)
-            CMD=$(echo "${RAW_LINE}" | cut -d'|' -f2-)
+        # 读取整个文件，支持多行指令。
+        #
+        # 这里不能用 ${RAW%%|*} / ${RAW#*|} 切分 —— 实测本机 sh 会把模式里的 '|'
+        # 吞掉（${X%%|*} 直接变成 ${X%%*}，返回空串），导致命令全部丢失。
+        # 改用 read 内置命令 + IFS 切分：read 的最后一个变量会原样保留剩余部分，
+        # 命令体里的管道符 '\|' 和换行都不会被破坏。
+        # 用 fd 3 而不是管道，避免 while 循环落在子 shell 里丢失变量。
+        REQ_ID=""
+        CMD=""
+        LINE=""
+        exec 3< "${REQ_FILE}"
+        IFS='|' read -r REQ_ID CMD <&3
+        while IFS= read -r LINE || [ -n "${LINE}" ]; do
+            CMD="${CMD}
+${LINE}"
+            LINE=""
+        done <&3
+        exec 3<&-
 
-            if [ -n "${REQ_ID}" ] && [ "${REQ_ID}" != "${LAST_REQ_ID}" ] && [ -n "${CMD}" ]; then
-                LAST_REQ_ID="${REQ_ID}"
-                printf "" > "${REQ_FILE}" 2>/dev/null
-                run_and_reply "${CMD}" "${RES_FILE}" "${REQ_ID}"
-            fi
+        if [ -n "${REQ_ID}" ] && [ "${REQ_ID}" != "${LAST_REQ_ID}" ] && [ -n "${CMD}" ]; then
+            LAST_REQ_ID="${REQ_ID}"
+            printf "" > "${REQ_FILE}" 2>/dev/null
+            run_and_reply "${CMD}" "${RES_FILE}" "${REQ_ID}"
         fi
     fi
 

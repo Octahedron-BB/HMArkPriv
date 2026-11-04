@@ -1684,6 +1684,10 @@
             {
               "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$ManageApplicationsActivity\"",
               "desc": "已装应用列表（约10秒）"
+            },
+            {
+              "cmd": "aa start -b com.easy.hmos.abroad -a EntryAbility",
+              "desc": "打开出境易"
             }
           ]
         },
@@ -1720,26 +1724,37 @@
           "name": "11.2 启动容器内的安卓应用",
           "items": [
             {
-              "cmd": "aa start -b <android_package_name> -a <main_activity_name>",
-              "desc": "启动容器内任意安卓应用"
-            }
-          ]
-        },
-        {
-          "name": "11.3 查询容器内已安装的应用",
-          "items": [
-            {
-              "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$ManageApplicationsActivity\"",
-              "desc": "容器内应用列表"
-            }
-          ]
-        },
-        {
-          "name": "11.4 出境易同样适用",
-          "items": [
+              "cmd": "aa start -b com.aistra.hail -a com.aistra.hail.ui.main.MainActivity",
+              "desc": "实测可用的完整例子"
+            },
             {
               "cmd": "aa start -b com.easy.hmos.abroad -a EntryAbility",
-              "desc": "打开出境易"
+              "desc": "拉起出境易本体"
+            }
+          ]
+        },
+        {
+          "name": "11.3 获取容器内应用的包名 + Activity 名",
+          "items": [
+            {
+              "cmd": "aa start -b com.aistra.hail -a com.aistra.hail.ui.main.MainActivity",
+              "desc": "唯一能成功的写法"
+            },
+            {
+              "cmd": "hilog -r",
+              "desc": "① 清空日志缓冲"
+            },
+            {
+              "cmd": "hilog -x 2>/dev/null | grep -oE 'StartAbility [A-Za-z0-9_.]+/[A-Za-z0-9_.$]+' | sort -u",
+              "desc": "③ 读出成对结果"
+            },
+            {
+              "cmd": "uitest dumpLayout -p /data/local/tmp/pkg.json >/dev/null 2>&1; grep -o '\"bundleName\":\"[^\"]*\"' /data/local/tmp/pkg.json | sort -u",
+              "desc": "前台应用的包名"
+            },
+            {
+              "cmd": "gzip -dc /data/log/hilog/hilog.*.gz 2>/dev/null | grep -oE 'StartAbility [A-Za-z0-9_.]+/[A-Za-z0-9_.$]+' | sort -u",
+              "desc": "历史候选池"
             }
           ]
         }

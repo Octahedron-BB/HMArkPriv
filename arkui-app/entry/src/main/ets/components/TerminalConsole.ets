@@ -138,16 +138,18 @@ export struct TerminalConsole {
       .width('100%')
       .padding({ left: 8, right: 8, top: 4, bottom: 4 })
 
-      // ===== 输入行 =====
+      // ===== 输入区（多行，长指令自动换行）=====
       Row() {
         Text('$')
           .fontFamily('JetBrains Mono, Consolas, monospace')
           .fontSize(14)
           .fontColor('#38BDF8')
-          .margin({ right: 6 })
+          .margin({ right: 6, top: 10 })
+          .alignSelf(ItemAlign.Start)
 
-        TextInput({ text: this.inputCmd, placeholder: '输入 Shell 指令...' })
+        TextArea({ text: this.inputCmd, placeholder: '输入 Shell 指令，长指令会自动换行...' })
           .layoutWeight(1)
+          .constraintSize({ minHeight: 40, maxHeight: 132 })
           .fontFamily('JetBrains Mono, Consolas, monospace')
           .fontSize(13)
           .backgroundColor('#0F172A')
@@ -155,6 +157,8 @@ export struct TerminalConsole {
           .placeholderColor('#475569')
           .placeholderFont({ size: 13 })
           .borderRadius(6)
+          .padding({ left: 8, right: 8, top: 8, bottom: 8 })
+          .enterKeyType(EnterKeyType.Send)
           .onSubmit(() => {
             this.runCommand();
           })
@@ -162,16 +166,35 @@ export struct TerminalConsole {
             this.inputCmd = val;
           })
 
-        Button(this.isExecuting ? '...' : '执行')
-          .backgroundColor('#38BDF8')
-          .fontColor('#090D16')
-          .fontSize(13)
-          .height(36)
-          .margin({ left: 6 })
-          .enabled(!this.isExecuting && this.inputCmd.length > 0)
-          .onClick(() => this.runCommand())
+        // 按钮列：执行 + 換行，横排才不会被输入框的最小高度压扁
+        Row() {
+          Button(this.isExecuting ? '...' : '执行')
+            .backgroundColor('#38BDF8')
+            .fontColor('#090D16')
+            .fontSize(13)
+            .layoutWeight(1)
+            .height(38)
+            .padding({ left: 4, right: 4 })
+            .enabled(!this.isExecuting && this.inputCmd.length > 0)
+            .onClick(() => this.runCommand())
+
+          // 长指令需要多行编辑时用：追加一个换行
+          Button('⏎')
+            .backgroundColor('#1E293B')
+            .fontColor('#94A3B8')
+            .fontSize(14)
+            .width(34)
+            .height(38)
+            .margin({ left: 4 })
+            .onClick(() => {
+              this.inputCmd = this.inputCmd + '\n';
+            })
+        }
+        .width(104)
+        .margin({ left: 6 })
       }
       .width('100%')
+      .alignItems(VerticalAlign.Top)
       .padding({ left: 8, right: 8, top: 4, bottom: 8 })
     }
     .width('100%')

@@ -136,9 +136,15 @@ export class CommandBuilder {
   //
   // 【真机实测 2026-11-04，Pura 70 Pro+】
   //   ✅ 通知使用权 —— 可用，可重复，界面确实跳到容器内的
-  //      「通知使用权」页（列出短信转发器/万步健康/KDE Connect/MacroDroid 等容器内应用）
-  //   ❌ 无障碍 / 特殊权限 / 应用管理 —— Activity 在卓易通 Settings 里不存在，
-  //      aa 仍返回 RC=0（静默），但界面退回桌面
+  //      「通知使用权」页（列出容器内已装应用）
+  //   ✅ 特殊访问权限 —— 可用，7 个条目完整（悬浮窗/媒体管理/修改系统设置/
+  //      通知使用权/闹钟和提醒/使用情况访问/ WLAN 控制）
+  //   ✅ 应用管理 —— 可用，列出容器内应用名 + 占用空间（冷启动约 10 秒）
+  //   ❌ 无障碍 —— 页面能启动会渲染，但渲染完立刻被系统安全策略关闭
+  //      （WMS 日志：enableShow change from true to false → aboutToDisappear）
+  //
+  // 【重要：等待时间】容器内 Activity 冷启动需 8-10 秒。只等 3-4 秒就 dumpLayout
+  // 会把「可用」误判成「Activity 不存在」—— 早期报告的错误就是这么来的。
   //
   // 【关键：$ 转义】
   // Activity 名含 `$`（内部类），必须写成 "....Settings\$XxxActivity"：
@@ -159,12 +165,12 @@ export class CommandBuilder {
     return `aa start -b com.android.settings -a "com.android.settings.Settings\\$AccessibilitySettingsActivity"`;
   }
 
-  /** 特殊应用权限 ❌ 真机验证：Activity 不存在 */
+  /** 特殊应用权限 ✅ 真机验证可用（7 个条目完整列出，冷启动约 8-10 秒） */
   static openSpecialAccess(): string {
     return `aa start -b com.android.settings -a "com.android.settings.Settings\\$SpecialAccessSettingsActivity"`;
   }
 
-  /** 容器内应用管理 ❌ 真机验证：Activity 不存在 */
+  /** 容器内应用管理 ✅ 真机验证可用（列出应用名+大小，冷启动约 10 秒） */
   static openManageApplications(): string {
     return `aa start -b com.android.settings -a "com.android.settings.Settings\\$ManageApplicationsActivity"`;
   }
