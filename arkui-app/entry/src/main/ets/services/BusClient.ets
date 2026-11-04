@@ -75,6 +75,20 @@ export class BusClient {
    * 5. 超时返回错误
    */
   async execute(command: string): Promise<CommandResult> {
+    // 【危险命令拦截】真机实测：以下命令会阻塞在内核态（Binder 调用挂起），
+    // 连 SIGKILL 都无法终止，导致 daemon 永久失联。
+    // 详见 docs/真机vs模拟器差异报告.md 第四章。
+    const danger = BusClient.checkDangerous(command);
+    if (danger) {
+      hilog.warn(DOMAIN, TAG, `blocked dangerous command: ${command}`);
+      return createFailedResult(
+        `[已拦截] 该命令会导致 daemon 永久挂起：\n${command}\n\n原因：${danger}\n\n` +
+        `这些命令阻塞在内核态 Binder 调用中，连 SIGKILL 都无法终止。\n` +
+        `如需内存信息，请使用 hidumper --mem | head -20（带管道会自动退出）。`,
+        0,
+      );
+    }
+
     const startTime = Date.now();
     const reqId = `req_${Date.now()}_${this.reqCounter++}`;
 
@@ -168,6 +182,38 @@ export class BusClient {
     } finally {
       fileIo.closeSync(file);
     }
+  }
+
+  /**
+   * 检查是否是会卡死 daemon 的危险命令。
+   * 返回原因字符串（非空表示危险），空字符串表示安全。
+   *
+   * 【真机实测依据 2026-11-04】
+   * - hidumper -c            → 永久卡死（Binder 阻塞，SIGKILL 无效）
+   * - hidumper --mem（无管道）→ 输出巨大，$() 捕获压力过大导致阻塞
+   * 这两个命令阻塞在不可中断状态，daemon 与 App 都无法恢复，只能重启 daemon。
+   */
+  static checkDangerous(command: string): string {
+    const c = command.trim();
+    const lower = c.toLowerCase();
+
+    // hidumper -c / --clusters：dump 全部系统信息，必卡
+    if (/^hidumper\s+(-c|--clusters)(\s|$)/.test(c) ||
+        /^hidumper\s+-c(\s|$)/.test(c)) {
+      return 'hidumper -c 会 dump 全部系统信息，阻塞在内核态 Binder 调用';
+    }
+
+    // hidumper --mem 不带管道：输出量极大
+    if (/^hidumper\s+--mem(\s|$)/.test(c) && !c.includes('|')) {
+      return 'hidumper --mem 输出量极大（真机 200+ 进程），不加管道会导致阻塞';
+    }
+
+    // 其他已知会阻塞的：直接写 console 的、无限流式的
+    if (/^tail\s+-f/.test(c)) {
+      return 'tail -f 是流式输出，永不退出（daemon 虽有 20s 超时但会拖慢）';
+    }
+
+    return '';
   }
 
   /**

@@ -109,15 +109,19 @@ export class CommandBuilder {
   }
 
   // ===== 系统信息 =====
-  /** 电池 ⚠️ 模拟器只返回 header；App 优先用 @ohos.batteryInfo */
+  // 【真机实测 2026-11-04】hidumper -s <Service> 在 shell 权限下拿不到 dump 内容，
+  // 只返回两行标题（LEN=163）。不是参数问题，是权限限制。
+  // 电池/热点/窗口信息必须走 @ohos.* 原生 API，见 BatteryReader。
+
+  /** 电池 ❌ 真机零数据，仅保留以标注；用 BatteryReader（@ohos.batteryInfo） */
   static batteryInfo(): string { return 'hidumper -s BatteryService'; }
-  /** 热点 ⚠️ 只返回 header */
+  /** 热点 ❌ 真机零数据 */
   static hotspotInfo(): string { return 'hidumper -s WifiHotspot'; }
-  /** 系统参数 ✅ 535 条，格式 "key = value" */
+  /** 系统参数 ✅ 真机 689 项，格式 "key = value" */
   static systemParams(): string { return `param get`; }
   /** 单个参数 ✅ */
   static param(key: string): string { return `param get ${key}`; }
-  /** 窗口信息 ⚠️ 只返回 header */
+  /** 窗口信息 ❌ 真机零数据 */
   static windowInfo(): string { return 'hidumper -s WindowManagerService'; }
   /** 内存统计 ✅ 有表格数据 */
   static memInfo(): string { return 'hidumper --mem'; }

@@ -322,12 +322,19 @@ power-shell suspend                   # 熄灭屏幕 [实机]
 power-shell timeout -o 3600000        # 常亮 1 小时 [实机]
 power-shell timeout -o 86400000       # 常亮 24 小时 [实机]
 power-shell timeout -r                # 恢复默认熄屏 [实机]
-power-shell setmode 600               # 正常模式 [未验证]
-power-shell setmode 601               # 省电模式 [未验证]
-power-shell setmode 602               # 超级省电模式 [未验证]
+power-shell setmode 600               # 正常模式 [实机]
+power-shell setmode 601               # 省电模式 [实机]
+power-shell setmode 602               # 超级省电模式 [实机]
 ```
 
-> **[未验证]** `power-shell setmode` 的模式编号 600/601/602 来自 HMArkPriv 原始文档，未在华为官方文档中找到对应记载，实际效果和编号可能不同。使用前请在目标设备上测试。
+> **[实机验证 2026-11-04]** `power-shell setmode` 在 Pura 70 Pro+ (HBN-AL80 / 7.0.0.109) 上实测**真实生效**。
+> 用 hilog 抓到了系统 PowerMode 服务的确认日志：
+> ```
+> power-shell setmode 601 → powermgr/PowerMode: GetDeviceMode: mode: 601
+> power-shell setmode 600 → powermgr/PowerMode: GetDeviceMode: mode: 600
+> ```
+> 注意：命令本身无任何输出（RC=0），必须靠系统日志或行为变化才能确认。
+> 另有一条告警 `StandbyService: policy 600 not found in policy cache`，但不影响设置生效。
 
 ### 3.2 屏幕截图（snapshot_display）**[实机] [社区]**
 

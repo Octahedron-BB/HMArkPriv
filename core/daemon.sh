@@ -48,15 +48,18 @@ while true; do
 
                 # Execute command with UID 2000 shell privileges.
                 #
-                # 【关键】必须重定向 stdin (< /dev/null)：
+                # 【关键 1】重定向 stdin (< /dev/null)：
                 # sqlite3、某些交互式 toybox 工具会尝试读 stdin，
                 # 而 $( ) 里的进程继承了 daemon 的 stdin（终端/管道），
                 # 导致永久阻塞，整个总线卡死（实测：sqlite3 --version 卡住 daemon）。
                 #
-                # 【关键】加 timeout 30 兜底：
-                # hilog -T、tail -f、logcat 类命令是流式输出不退出，
-                # 同样会永久阻塞。超时后返回 RC=124。
-                OUT=$(timeout 30 sh -c "${CMD}" 2>&1 < /dev/null)
+                # 【关键 2】timeout -k 5 20：两级超时
+                #   - 20 秒后先发 SIGTERM（给命令优雅退出的机会）
+                #   - 再等 5 秒仍在运行则发 SIGKILL（强制终止）
+                # 只用 SIGTERM 不够！实测 hidumper -c 阻塞在 Binder 调用时
+                # 完全忽略 SIGTERM，timeout 30 形同虚设，daemon 永久卡死。
+                # SIGKILL 无法被忽略，必须用 -k 兜底。
+                OUT=$(timeout -k 5 20 sh -c "${CMD}" 2>&1 < /dev/null)
                 RC=$?
                 TS=$(date '+%Y-%m-%d %H:%M:%S')
 
