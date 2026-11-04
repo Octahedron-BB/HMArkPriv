@@ -1737,24 +1737,24 @@
           "name": "11.3 获取容器内应用的包名 + Activity 名",
           "items": [
             {
-              "cmd": "aa start -b com.aistra.hail -a com.aistra.hail.ui.main.MainActivity",
-              "desc": "唯一能成功的写法"
+              "cmd": "uitest dumpLayout -p /data/local/tmp/d.json >/dev/null 2>&1; grep -oE '\"bundleName\":\"[^\"]+\"|\"abilityName\":\"[^\"]+\"' /data/local/tmp/d.json | grep -v 'sceneboard' | sort -u",
+              "desc": "一键抓取前台应用的包名与Activity"
             },
             {
-              "cmd": "hilog -r",
-              "desc": "① 清空日志缓冲"
+              "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$ManageApplicationsActivity\"",
+              "desc": "打开容器应用管理列表(查看已装应用)"
             },
             {
-              "cmd": "hilog -x 2>/dev/null | grep -oE 'StartAbility [A-Za-z0-9_.]+/[A-Za-z0-9_.$]+' | sort -u",
-              "desc": "③ 读出成对结果"
-            },
-            {
-              "cmd": "uitest dumpLayout -p /data/local/tmp/pkg.json >/dev/null 2>&1; grep -o '\"bundleName\":\"[^\"]*\"' /data/local/tmp/pkg.json | sort -u",
-              "desc": "前台应用的包名"
+              "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$NotificationAccessSettingsActivity\"",
+              "desc": "打开容器通知使用权设置"
             },
             {
               "cmd": "gzip -dc /data/log/hilog/hilog.*.gz 2>/dev/null | grep -oE 'StartAbility [A-Za-z0-9_.]+/[A-Za-z0-9_.$]+' | sort -u",
-              "desc": "历史候选池"
+              "desc": "检索历史启动记录(包名/Activity对)"
+            },
+            {
+              "cmd": "hilog -x 2>/dev/null | grep -oE 'StartAbility [A-Za-z0-9_.]+/[A-Za-z0-9_.$]+' | sort -u",
+              "desc": "检索当前日志缓冲中的启动记录"
             }
           ]
         }

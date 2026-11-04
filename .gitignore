@@ -19,11 +19,22 @@ arkui-app/.cxx/
 arkui-app/.ohpm/
 arkui-app/node_modules/
 arkui-app/entry/node_modules/
+arkui_app/build/
+arkui_app/entry/build/
+arkui_app/.hvigor/
+arkui_app/.cxx/
+arkui_app/.ohpm/
+arkui_app/oh_modules/
+arkui_app/entry/oh_modules/
+arkui_app/node_modules/
+arkui_app/entry/node_modules/
 
 # ===== 开发工具本地配置 =====
 .idea/
 arkui-app/.idea/
 arkui-app/local.properties
+arkui_app/.idea/
+arkui_app/local.properties
 .workbuddy-ai/
 arkui-app/scripts/verify-result.md
 .tmp/

@@ -986,113 +986,91 @@ aa start -b com.easy.hmos.abroad -a EntryAbility                      # 拉起�
 
 ### 11.3 获取容器内应用的包名 + Activity 名
 
-> **[实机验证 2026-11-04]** 这是 11.2 的**前置步骤** —— 不拿到这两个名字，什么都启动不了。
-
-**先说清一个硬规则**（实测踩过）：`aa start` 的 `-b` 和 `-a` **两个都必须给**。
-
-> 只给包名、或用隐式 URI 形式（`-U` 后面跟 `package:包名`）都不行，
-> 一律报 `10103101 Failed to find a matching application for implicit launch` ——
-> 因为容器内的安卓包不在鸿蒙 `bm` 里，`aa` 的隐式匹配必然落空。
+> **[实机验证 2026-11-04]** 这是 11.2 的**前置步骤** —— `aa start -b <包名> -a <Activity>` 两个参数**必须成对提供**。
 >
-> | 写法 | 结果 |
-> |------|------|
-> | 只给 `-b` 包名 | ✗ 10103101 |
-> | `-U package:包名`（隐式 URI） | ✗ 10103101 |
-> | `-b` 包名 + `-a` Activity | ✓ 成功 |
+> 容器内的安卓应用没有在宿主鸿蒙系统的包管理系统（`bm`）中注册，因此无法使用隐式启动，也不支持只传 `-b`（会报 `10103101 Failed to find a matching application for implicit launch`）。
+>
+> 以下提供四种从最简单到最彻底的获取方法，按推荐度排序：
+
+#### 方法 A：一键抓取前台应用（最推荐，手机/终端直接执行）
+
+将卓易通/出境易中的目标安卓应用打开在前台，然后直接执行下方单行命令。
+命令通过控件树提取当前前台窗口的 `bundleName` 与 `abilityName`，**包名与 Activity 名一次性全部拿全**，无需清空日志或繁琐复现：
 
 ```bash
-aa start -b com.aistra.hail -a com.aistra.hail.ui.main.MainActivity   # 唯一能成功的写法
+uitest dumpLayout -p /data/local/tmp/d.json >/dev/null 2>&1; grep -oE '"bundleName":"[^"]+"|"abilityName":"[^"]+"' /data/local/tmp/d.json | grep -v 'sceneboard' | sort -u
 ```
 
-所以下面四条方法都是为了凑齐「包名 + Activity 名」这一对。
+**实测输出示例**（以 KDE Connect 为例）：
 
-#### 方法 A：从系统日志抓成对（推荐，一次拿全）
+```
+"abilityName":"org.kde.kdeconnect.UserInterface.MainActivity"
+"bundleName":"org.kde.kdeconnect_tp"
+```
 
-容器内应用每次**真正启动**，宿主 AMS 都会打一行 `StartAbility 包名/Activity名`。
-先清空缓冲再打开应用，结果最干净：
+拿到的结果直接填入启动命令：
+```bash
+aa start -b org.kde.kdeconnect_tp -a org.kde.kdeconnect.UserInterface.MainActivity
+```
+
+> **优势说明**：
+> 1. 无需关注日志缓冲是否被冲掉，只要界面停留在目标应用，任何时候执行都能秒出结果。
+> 2. 自动过滤桌面图层 `com.ohos.sceneboard`，只保留目标应用真实参数。
+> 3. 输出路径使用 `/data/local/tmp/`，确保 shell 具有完整的写入权限。
+
+#### 方法 B：直达容器内设置与权限界面（零命令排查应用）
+
+如果只是想看容器内安装了哪些应用，或者要给某个应用（如短信转发器、KDE Connect）授予**通知使用权**、悬浮窗或后台权限，无需记忆包名，直接拉起容器内置的 Android 原生管理页：
 
 ```bash
-hilog -r    # ① 清空日志缓冲
-# ② 从卓易通里点开目标应用，等它出现界面
-hilog -x 2>/dev/null | grep -oE 'StartAbility [A-Za-z0-9_.]+/[A-Za-z0-9_.$]+' | sort -u   # ③ 读出成对结果
+# 1. 打开容器内应用管理列表（查看所有已装应用、存储占用、版本、强停与卸载）
+aa start -b com.android.settings -a "com.android.settings.Settings\$ManageApplicationsActivity"
+
+# 2. 打开容器内“通知使用权”授权页（直接点进列表勾选短信转发器/KDE Connect）
+aa start -b com.android.settings -a "com.android.settings.Settings\$NotificationAccessSettingsActivity"
+
+# 3. 打开容器内特殊访问权限设置总览
+aa start -b com.android.settings -a "com.android.settings.Settings\$SpecialAccessSettingsActivity"
 ```
 
-实测输出（就一行，直接可用）：
+#### 方法 C：电脑端 HDC 查任务栈（成对完整列表）
+
+当手机连接电脑调试时，在电脑终端直接执行 `aa dump -l`。该命令会直接列出系统最近运行的所有任务栈信息，容器内运行过的所有应用都会以 `#[#<包名>:entry:<Activity名>]` 成对格式展示：
+
+```bash
+hdc shell "aa dump -l"
+```
+
+**实测输出片段**：
+
+```
+Mission ID #954  mission name #[#org.kde.kdeconnect_tp:entry:org.kde.kdeconnect.UserInterface.MainActivity]
+Mission ID #979  mission name #[#com.aistra.hail:entry:com.aistra.hail.ui.main.MainActivity]
+Mission ID #966  mission name #[#com.easy.abroad:entry:com.easy.abroad.activities.MainActivity]
+```
+
+> **注意**：由于 HarmonyOS 7.0 Binder IPC 管道重定向限制，`aa dump -l` 仅支持在 HDC 终端直接显示；若在手机本地通过 Shell 脚本重定向或管道抓取会被系统置空。因此在手机端 App 内推荐使用**方法 A**。
+
+#### 方法 D：从历史启动日志检索候选池（免重复操作）
+
+无需提前执行 `hilog -r` 清空日志，直接在已有的落盘压缩日志或当前缓冲中全局检索最近启动过的记录：
+
+```bash
+# 从落盘历史日志中搜索（覆盖过去几十分钟内启动过的所有应用）
+gzip -dc /data/log/hilog/hilog.*.gz 2>/dev/null | grep -oE 'StartAbility [A-Za-z0-9_.]+/[A-Za-z0-9_.$]+' | sort -u
+
+# 从当前实时日志缓冲中搜索
+hilog -x 2>/dev/null | grep -oE 'StartAbility [A-Za-z0-9_.]+/[A-Za-z0-9_.$]+' | sort -u
+```
+
+**实测输出示例**：
 
 ```
 StartAbility com.aistra.hail/com.aistra.hail.ui.main.MainActivity
+StartAbility org.kde.kdeconnect_tp/org.kde.kdeconnect.UserInterface.MainActivity
 ```
 
-把斜杠前后两半分别填进 11.2 的 `-b` 和 `-a` 即可。
-
-> **抓不到怎么办**：这条日志只在**真正新建窗口**时打。
-> 应用从后台切回前台、或本来就停在那个界面，都不会打。
-> 先 `uinput -K -d 1 -u 1`（回桌面）退出应用，再重新点开一次。
->
-> **别名情况**：部分应用的 Activity 前缀和包名不一致，例如
-> `org.kde.kdeconnect_tp` 的入口是 `org.kde.kdeconnect.UserInterface.MainActivity`。
-> 所以不要自己拼 Activity 名，用日志里成对出现的那个。
-
-#### 方法 B：读前台窗口的 bundleName（确认用，最稳）
-
-不限启动方式，只要应用在前台就能读到它的包名：
-
-```bash
-uitest dumpLayout -p /data/local/tmp/pkg.json >/dev/null 2>&1; grep -o '"bundleName":"[^"]*"' /data/local/tmp/pkg.json | sort -u   # 前台应用的包名
-```
-
-实测输出：
-
-```
-"bundleName":"com.aistra.hail"
-"bundleName":"com.ohos.sceneboard"
-```
-
-`com.ohos.sceneboard` 是桌面（常驻图层），**另一个就是当前前台应用的包名**。
-缺点：只给包名，拿不到 Activity 名。
-
-> `dumpLayout` 的输出路径必须用 `/data/local/tmp/` 这类 shell 可写目录，
-> 写 `/sdcard`（hmdfs）会因为 shell 无 create 权限而失败。
-
-#### 方法 C：批量扫（找候选池）
-
-想一次看一批，可以扫实时缓冲或滚动落盘的日志：
-
-```bash
-# 实时缓冲
-hilog -x 2>/dev/null | grep -oE 'StartAbility [A-Za-z0-9_.]+/[A-Za-z0-9_.$]+' | sort -u
-
-# 历史日志（shell 可读，能翻到几十分钟前）
-gzip -dc /data/log/hilog/hilog.*.gz 2>/dev/null | grep -oE 'StartAbility [A-Za-z0-9_.]+/[A-Za-z0-9_.$]+' | sort -u   # 历史候选池
-```
-
-历史日志里会混进鸿蒙原生应用的启动记录（日志本身不区分来源），
-所以它只适合当候选池，命中后仍要用方法 A/B 确认一次。
-
-#### 方法 D：从 APK 反查（电脑端，最确定）
-
-```bash
-# aapt（Android SDK build-tools 自带）
-aapt dump badging app.apk | grep -E "^package|launchable-activity"
-#   package: name='com.example.app' versionCode='1' ...
-#   launchable-activity: name='com.example.app.MainActivity' ...
-
-# 或者 apktool 解包看 AndroidManifest.xml
-apktool d app.apk -o out && grep -E "package=|android:name" out/AndroidManifest.xml | head -5
-```
-
-> **为什么容器包名在鸿蒙侧查不到**：安卓包管理活在容器自己的 PID / mount namespace 里
-> （`isulad` + `lxc-start` 拉起的独立环境），宿主 `bm` 只认鸿蒙自己的 HAP ——
-> `bm dump -a` 列表里没有容器包，`bm dump -n <android_pkg>` 报 not found。
-> 容器数据目录 `/data/virt_service/rgm_hmos/anco_hmos_data` 被 SELinux 完全隔离，
-> `ls` 和 `hdc file recv` 都是 `Permission denied`。
-> **日志和前台窗口是仅有的两个能从宿主侧"看到"容器包名的通道**。
-
-#### 附：11.1 那个应用管理页能看什么
-
-11.1 的 `ManageApplicationsActivity` 是容器内安卓设置的应用列表，
-能看到**应用中文名 + 占用空间**，点进去还有版本号、卸载、强停、通知管理、权限状态。
-但它**不显示包名**——想知道包名还是要用上面四条方法。
+斜杠前半段为 `-b` 包名，后半段为 `-a` Activity 名。
 
 ---
 
