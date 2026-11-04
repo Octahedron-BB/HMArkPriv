@@ -11,11 +11,11 @@
           "items": [
             {
               "cmd": "id",
-              "desc": "uid=2000(shell) gid=2000(shell) ..."
+              "desc": "当前用户身份"
             },
             {
               "cmd": "uname -a",
-              "desc": "HongMeng Kernel 1.13.0 ... aarch64 Toybox"
+              "desc": "内核与系统信息"
             },
             {
               "cmd": "echo $PATH",
@@ -70,7 +70,7 @@
             },
             {
               "cmd": "aa dump",
-              "desc": "打印应用组件信息（已废弃，建议用 hidumper）",
+              "desc": "打印应用组件信息（已废弃）",
               "tags": [
                 "官方"
               ]
@@ -112,7 +112,7 @@
             },
             {
               "cmd": "aa send-memory-level",
-              "desc": "触发 onMemoryLevel 回调（API 13+）",
+              "desc": "触发内存级别回调",
               "tags": [
                 "官方"
               ]
@@ -218,7 +218,7 @@
             },
             {
               "cmd": "aa send-memory-level -p <pid> -l <memoryLevel>",
-              "desc": "触发 onMemoryLevel（API 13+）"
+              "desc": "触发内存级别回调"
             },
             {
               "cmd": "aa pre-start -m 1 -b <bundleName> -u <userId>",
@@ -598,7 +598,7 @@
           "items": [
             {
               "cmd": "hidumper -s PowerManagerService -a -s",
-              "desc": "屏幕状态（AWAKE/SLEEP/INACTIVE）",
+              "desc": "屏幕状态 AWAKE/SLEEP",
               "tags": [
                 "社区"
               ]
@@ -870,7 +870,7 @@
             },
             {
               "cmd": "uitest uiRecord record",
-              "desc": "开始录制 → /data/local/tmp/layout/record.csv"
+              "desc": "录制UI操作"
             },
             {
               "cmd": "uitest uiRecord read",
@@ -940,7 +940,10 @@
           "items": [
             {
               "cmd": "hidumper -s BatteryService",
-              "desc": ""
+              "desc": "电池与充电状态",
+              "tags": [
+                "实机"
+              ]
             },
             {
               "cmd": "hidumper -s BatteryService -a -i",
@@ -951,19 +954,31 @@
             },
             {
               "cmd": "hidumper -s WifiDevice",
-              "desc": ""
+              "desc": "WiFi 设备信息",
+              "tags": [
+                "社区"
+              ]
             },
             {
               "cmd": "hidumper -s WifiHotspot",
-              "desc": ""
+              "desc": "个人热点状态",
+              "tags": [
+                "实机"
+              ]
             },
             {
               "cmd": "hidumper -s WindowManagerService",
-              "desc": ""
+              "desc": "窗口管理器",
+              "tags": [
+                "实机"
+              ]
             },
             {
               "cmd": "hidumper -s NetConnManager",
-              "desc": ""
+              "desc": "网络连接",
+              "tags": [
+                "社区"
+              ]
             },
             {
               "cmd": "hidumper -s RenderService -a screen",
@@ -991,7 +1006,10 @@
             },
             {
               "cmd": "hidumper -s MemoryManagerService -a -a",
-              "desc": ""
+              "desc": "内存管理",
+              "tags": [
+                "社区"
+              ]
             },
             {
               "cmd": "hidumper -s MemoryManagerService -a -r",
@@ -1195,11 +1213,11 @@
           "items": [
             {
               "cmd": "service_control start <service_name>",
-              "desc": ""
+              "desc": "启动系统服务"
             },
             {
               "cmd": "service_control stop <service_name>",
-              "desc": ""
+              "desc": "停止系统服务"
             }
           ]
         }
@@ -1365,7 +1383,7 @@
           "items": [
             {
               "cmd": "hisysevent -l",
-              "desc": ""
+              "desc": "列出系统事件"
             }
           ]
         },
@@ -1376,8 +1394,8 @@
           ],
           "items": [
             {
-              "cmd": "bytrace -t 5 -b 4096 --overwrite ability app > /data/local/tmp/trace.ftrace",
-              "desc": ""
+              "cmd": "bytrace -t 5 -b 4096 --overwrite ability app > /data/local/tmp/trace",
+              "desc": "抓性能trace.ftrace"
             }
           ]
         },
@@ -1567,7 +1585,7 @@
           "items": [
             {
               "cmd": "sqlite3 <db_file>",
-              "desc": ""
+              "desc": "打开数据库交互式 shell"
             }
           ]
         },
@@ -1657,23 +1675,15 @@
           "items": [
             {
               "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$NotificationAccessSettingsActivity\"",
-              "desc": "打开容器内安卓的「通知使用权」页面（Notification Access）"
+              "desc": "通知使用权页"
             },
             {
               "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$SpecialAccessSettingsActivity\"",
-              "desc": "打开容器内安卓的「特殊访问权限」总入口，相当于安卓设置里的"
-            },
-            {
-              "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$AccessibilitySettingsActivity\"",
-              "desc": "打开容器内安卓的「无障碍」页面，可给自动化工具授予"
+              "desc": "特殊访问权限页"
             },
             {
               "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$ManageApplicationsActivity\"",
-              "desc": "打开容器内安卓的「应用」页面，可查看/卸载容器内应用，"
-            },
-            {
-              "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$AppDashboardActivity\"",
-              "desc": "应用管理的另一种入口（AppDashboardActivity），"
+              "desc": "已装应用列表（待确认）"
             }
           ]
         },
@@ -1682,11 +1692,11 @@
           "items": [
             {
               "cmd": "uitest dumpLayout -p /data/local/tmp/ui.json",
-              "desc": "导出整个界面的控件树（找按钮坐标用这个）"
+              "desc": "导出界面控件树（找按钮坐标）"
             },
             {
               "cmd": "uinput -T -c 540 1200",
-              "desc": "点击指定坐标（替代无障碍的 click）"
+              "desc": "点击坐标"
             },
             {
               "cmd": "uinput -t \"要输入的文字\"",
@@ -1694,27 +1704,15 @@
             },
             {
               "cmd": "uinput -T -m 540 2000 540 800 300",
-              "desc": "从(540,2000)滑到(540,800)，耗时300ms"
+              "desc": "滑动，耗时300ms"
             },
             {
               "cmd": "uinput -K -d 2 -u 2",
-              "desc": "按返回键（替代无障碍的 performGlobalAction BACK）"
-            },
-            {
-              "cmd": "uinput -K -d 1 -u 1",
-              "desc": "按 Home 键（回到桌面）"
-            },
-            {
-              "cmd": "sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -T -c 540 1200",
-              "desc": "点击坐标（MacroDroid Shell 动作里用）"
-            },
-            {
-              "cmd": "sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -K -d 2 -u 2",
               "desc": "按返回键"
             },
             {
-              "cmd": "sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh power-shell wakeup",
-              "desc": "唤醒屏幕"
+              "cmd": "uinput -K -d 1 -u 1",
+              "desc": "按 Home 键"
             }
           ]
         },
@@ -1727,31 +1725,11 @@
             },
             {
               "cmd": "aa start -b cn.ppps.forwarder -a cn.ppps.forwarder.activity.MainActivity",
-              "desc": "直接启动容器内的短信转发器 App，不用先开卓易通再点图标。"
+              "desc": "短信转发器"
             },
             {
               "cmd": "aa start -b org.kde.kdeconnect_tp -a org.kde.kdeconnect.UserInterface.MainActivity",
-              "desc": "启动容器内的 KDE Connect，用于手机 ⇄ 电脑互传文件、"
-            }
-          ]
-        },
-        {
-          "name": "11.3 在 MacroDroid 中调用宿主特权",
-          "tags": [
-            "实机"
-          ],
-          "items": [
-            {
-              "cmd": "sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh power-shell wakeup",
-              "desc": "唤醒屏幕"
-            },
-            {
-              "cmd": "sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -T -c 630 1422",
-              "desc": "点击坐标(630,1422)"
-            },
-            {
-              "cmd": "sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -K -d 2 -u 2",
-              "desc": "按返回键"
+              "desc": "KDE Connect"
             }
           ]
         }
@@ -1761,19 +1739,69 @@
       "name": "14. 常用系统参数速查",
       "groups": [
         {
-          "name": "",
+          "name": "14. 常用系统参数速查",
           "items": [
             {
-              "cmd": "param get | grep -E 'os.name|model|brand|version.release|cpu'",
-              "desc": ""
+              "cmd": "param get const.product.name",
+              "desc": "设备名称"
+            },
+            {
+              "cmd": "param get const.product.brand",
+              "desc": "品牌"
+            },
+            {
+              "cmd": "param get const.product.model",
+              "desc": "型号"
+            },
+            {
+              "cmd": "param get const.product.software.version",
+              "desc": "软件版本"
+            },
+            {
+              "cmd": "param get const.ohos.apiversion",
+              "desc": "API 版本"
+            },
+            {
+              "cmd": "param get const.product.cpu.abilist",
+              "desc": "CPU 架构"
+            },
+            {
+              "cmd": "param get const.product.devicetype",
+              "desc": "设备类型"
+            },
+            {
+              "cmd": "param get const.product.developmentmode",
+              "desc": "开发者模式 1/0"
+            },
+            {
+              "cmd": "param get const.build.version.release",
+              "desc": "系统发行版本",
+              "tags": [
+                "未验证"
+              ]
+            },
+            {
+              "cmd": "param get hw_sc.build.platform.version",
+              "desc": "鸿蒙核心版本",
+              "tags": [
+                "未验证"
+              ]
+            },
+            {
+              "cmd": "param get const.bms.allowenterprisebundle",
+              "desc": "允许企业应用"
+            },
+            {
+              "cmd": "param get | grep -E 'os.name|model|brand|version'",
+              "desc": "模糊查型号/版本"
             },
             {
               "cmd": "param get | grep -E 'development|debug'",
-              "desc": ""
+              "desc": "模糊查调试相关"
             },
             {
               "cmd": "param get",
-              "desc": ""
+              "desc": "列出全部参数"
             }
           ]
         }

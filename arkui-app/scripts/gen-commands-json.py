@@ -42,7 +42,7 @@ KNOWN_CMDS = {
 }
 
 # 章节标题里出现这些词的，整节跳过（不是命令手册内容）
-SKIP_SECTIONS = ('验证来源标注体系', '重要说明', '目录', '附录', '模糊查询')
+SKIP_SECTIONS = ('验证来源标注体系', '重要说明', '目录', '附录')
 
 
 def clean(s):
@@ -100,7 +100,9 @@ def main():
             cur_cat = {'name': cur_h2 or '其他', 'groups': []}
             categories.append(cur_cat)
         if cur_grp is None:
-            cur_grp = {'name': name, 'items': []}
+            # 组名为空时用分类名兜底，避免侧边栏出现空白分组标题
+            display = name or cur_cat['name'] or '其他'
+            cur_grp = {'name': display, 'items': []}
             cur_cat['groups'].append(cur_grp)
         return cur_grp
 

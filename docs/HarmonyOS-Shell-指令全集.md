@@ -71,8 +71,8 @@
 ### 1.2 环境信息命令 **[实机]**
 
 ```bash
-id                 # uid=2000(shell) gid=2000(shell) ...
-uname -a           # HongMeng Kernel 1.13.0 ... aarch64 Toybox
+id                 # 当前用户身份
+uname -a           # 内核与系统信息
 echo $PATH         # 查看可执行文件搜索路径
 whoami             # shell
 ```
@@ -106,13 +106,13 @@ hdc shell "aa start -b com.android.settings -a com.android.settings.Settings\$No
 | `aa start` | 启动应用组件 | [官方] [实机] |
 | `aa stop-service` | 停止 Service 组件 | [官方] |
 | `aa force-stop` | 强制停止进程 | [官方] [实机] |
-| `aa dump` | 打印应用组件信息（**已废弃**，建议用 hidumper） | [官方] |
+| `aa dump` | 打印应用组件信息（已废弃） | [官方] |
 | `aa test` | 启动测试框架 | [官方] |
 | `aa attach` | 使应用进入调试模式 | [官方] |
 | `aa detach` | 使应用退出调试模式 | [官方] |
 | `aa appdebug` | 设置/取消/获取等待调试状态 | [官方] |
 | `aa process` | 应用调试/调优 | [官方] |
-| `aa send-memory-level` | 触发 onMemoryLevel 回调（API 13+） | [官方] |
+| `aa send-memory-level` | 触发内存级别回调 | [官方] |
 | `aa pre-start` | 应用预启动（API 26+） | [官方] |
 
 #### 2.1.1 启动应用（aa start）**[官方]**
@@ -228,7 +228,7 @@ aa test -b <bundleName> [-m <moduleName>] -s unittest <testRunner> [options]
 #### 2.1.6 其他 **[官方]**
 
 ```bash
-aa send-memory-level -p <pid> -l <memoryLevel>   # 触发 onMemoryLevel（API 13+）
+aa send-memory-level -p <pid> -l <memoryLevel>   # 触发内存级别回调
 aa pre-start -m 1 -b <bundleName> -u <userId>     # 应用预启动（API 26+）
 ```
 
@@ -346,7 +346,7 @@ snapshot_display -d 0 -f /data/local/tmp/screen.png   # 指定屏幕编号 [社�
 ### 3.3 通过 hidumper 查看屏幕/电源状态 **[社区]**
 
 ```bash
-hidumper -s PowerManagerService -a -s          # 屏幕状态（AWAKE/SLEEP/INACTIVE）[社区]
+hidumper -s PowerManagerService -a -s          # 屏幕状态 AWAKE/SLEEP [社区]
 hidumper -s RenderService -a screen            # 分辨率、刷新率 [社区]
 hidumper -s DisplayManagerService -a -a        # 屏幕信息 [社区]
 hidumper -s DisplayManagerService -a -f        # 折叠状态 [社区]
@@ -517,7 +517,7 @@ uitest dumpLayout -w <FocusWinId> -p /data/local/tmp/focus_layout.json
 #### 4.2.4 操作录制 **[社区]**
 
 ```bash
-uitest uiRecord record    # 开始录制 → /data/local/tmp/layout/record.csv
+uitest uiRecord record    # 录制UI操作
 uitest uiRecord read      # 读取录制
 ```
 
@@ -540,20 +540,20 @@ hidumper -s <SA_name> -a "<args>"  # 带 arguments [官方]
 
 ```bash
 # 电池与充电状态 [实机]
-hidumper -s BatteryService
+hidumper -s BatteryService           # 电池与充电状态 [实机]
 hidumper -s BatteryService -a -i       # 详细信息 [社区]
 
 # WiFi 信息 [社区]
-hidumper -s WifiDevice
+hidumper -s WifiDevice                # WiFi 设备信息 [社区]
 
 # 个人热点 [实机]
-hidumper -s WifiHotspot
+hidumper -s WifiHotspot               # 个人热点状态 [实机]
 
 # 窗口管理器 [实机]
-hidumper -s WindowManagerService
+hidumper -s WindowManagerService      # 窗口管理器 [实机]
 
 # 网络连接 [社区]
-hidumper -s NetConnManager
+hidumper -s NetConnManager            # 网络连接 [社区]
 
 # 渲染服务 [社区]
 hidumper -s RenderService -a screen    # 分辨率、刷新率
@@ -568,7 +568,7 @@ hidumper -s DisplayManagerService -a -a  # 屏幕信息
 hidumper -s DisplayManagerService -a -f  # 折叠状态
 
 # 内存管理 [官方]
-hidumper -s MemoryManagerService -a -a
+hidumper -s MemoryManagerService -a -a  # 内存管理 [社区]
 hidumper -s MemoryManagerService -a -r
 
 # Ability 管理器（替代 aa dump）[官方]
@@ -619,8 +619,8 @@ param save                              # 保存参数 [官方]
 ### 6.2 系统服务控制 **[未验证]**
 
 ```bash
-service_control start <service_name>
-service_control stop <service_name>
+service_control start <service_name>   # 启动系统服务
+service_control stop <service_name>    # 停止系统服务
 ```
 
 > **[未验证]** `service_control` 命令来自 HMArkPriv 原始文档，未在华为官方文档中找到记载。该命令可能存在但参数和行为未经外部验证。
@@ -666,7 +666,7 @@ hdc file recv data/log/faultlog/faultlogger/ ./
 ### 7.3 系统事件（hisysevent）**[未验证]**
 
 ```bash
-hisysevent -l
+hisysevent -l                          # 列出系统事件
 ```
 
 > **[未验证]** 来自 HMArkPriv 原始文档，未在官方文档中找到 `-l` 参数的说明。
@@ -674,7 +674,7 @@ hisysevent -l
 ### 7.4 性能追踪（bytrace）**[未验证]**
 
 ```bash
-bytrace -t 5 -b 4096 --overwrite ability app > /data/local/tmp/trace.ftrace
+bytrace -t 5 -b 4096 --overwrite ability app > /data/local/tmp/trace   # 抓性能trace.ftrace
 ```
 
 > **[未验证]** 来自 HMArkPriv 原始文档。`bytrace` 工具存在于系统中，但具体参数语法未经外部验证。
@@ -760,7 +760,7 @@ uniq                              # 去重 [实机]
 ### 9.4 数据库 **[未验证]**
 
 ```bash
-sqlite3 <db_file>
+sqlite3 <db_file>                      # 打开数据库交互式 shell
 ```
 
 > **[未验证]** `sqlite3` 是否预装在 HarmonyOS 7.0 中未经确认。
@@ -856,33 +856,9 @@ hdc tconn 127.0.0.1:5556
 > `rgm_hmos` / `isulad` 管理的轻量级容器（ANCO 架构）中，有独立网络命名空间与进程树。
 > 鸿蒙宿主的 `aa start -b com.android.settings` 能把启动请求路由到容器内的安卓 Settings。
 >
-> **验证结果（4 条中 2 条可用，1 条被系统拦截，1 条不确定）**：
->
-> | Activity | 结果 | 说明 |
-> |----------|------|------|
-> | `NotificationAccessSettingsActivity` | ✅ **可用** | 跳到容器内「通知使用权」页，列出容器内应用（短信转发器/万步健康/KDE Connect/MacroDroid 等），可重复打开 |
-> | `SpecialAccessSettingsActivity` | ✅ **可用** | 跳到「特殊访问权限」页，列出「显示在其他应用的上层 / 媒体管理应用 / 修改系统设置 / 通知使用权 / 闹钟和提醒 / 使用情况访问权限 / WLAN 控制」 |
-> | `AccessibilitySettingsActivity` | ⚠️ **被系统拦截** | 页面**能启动也会渲染**（WMS 日志有完整的 scaleX 0.035→1 创建记录），但渲染后立刻被关闭，用户会看到"为了隐私安全，不允许…"的提示 |
-> | `ManageApplicationsActivity` | ❓ 待确认 | 多次测试均退回桌面，但用户反馈曾成功跳出。可能依赖特定系统版本或前置状态 |
->
-> **关于无障碍被拦截的机制**（实测日志）：
-> ```
-> 16:01:10.354  WMS  scaleX from 0.035 to 1           ← 页面开始渲染
-> 16:01:10.356  WMS  enableShow change from true to false  ← 立刻被隐藏
-> 16:01:10.359  WMS  aboutToDisappear                  ← 页面销毁
-> ```
-> **不是"没有这个功能"，而是系统安全策略主动拦截**。
-> 无障碍权限能完全控制设备（模拟任意操作、读取屏幕内容），
-> 所以鸿蒙禁止通过 `aa start` 这种程序化方式打开它的设置页，必须用户手动进设置。
-> 这是设计上的安全边界，无法绕过。
->
-> **验证技巧**：判断是否真的跳转成功，不能只看 `aa start` 的 RC（永远是 0）。
-> 正确做法是启动后等 5-6 秒，再 `uitest dumpLayout` 看：
->   - `bundleName` 是否为 `com.android.settings`
->   - 界面文本里是否出现预期标题（如「特殊访问权限」）
->
-> 早期我用 3-4 秒的等待时间判断，导致把 `SpecialAccessSettingsActivity` 误判为不可用 ——
-> 容器内 Activity 启动较慢，需要更长的等待。
+> **验证技巧**：`aa start` 的 RC 永远是 0，不能作为成功依据。
+> 正确做法是启动后等 **5-6 秒**（容器内 Activity 启动较慢），
+> 再 `uitest dumpLayout` 看 `bundleName` 是否为 `com.android.settings`。
 >
 > **关键：`$` 转义（不转义必定失败）**
 >
@@ -897,86 +873,28 @@ hdc tconn 127.0.0.1:5556
 > **不能**用 `grep -i android` 或 `grep -i anco` —— 容器包的 bundleName 里没有这两个词。
 
 ```bash
-# ┌─────────────────────────────────────────────────────────────────────────┐
-# │ ✅ 可用：通知使用权                                                       │
-# ├─────────────────────────────────────────────────────────────────────────┤
-# │ 作用：打开容器内安卓的「通知使用权」页面（Notification Access）              │
-# │       这个页面在鸿蒙侧是看不到的 —— 卓易通把安卓设置入口全隐藏了，           │
-# │       只能靠这条命令绕过。                                                │
-# │ 里面能看到：容器内已安装的安卓应用列表，可逐个授予"读取通知"权限。           │
-# │       典型用途：给短信转发器、通知转发类 App 授权。                        │
-# │ 实测：界面标题「通知使用权」，列出 短信转发器 / 万步健康 / 雹 /             │
-# │       自动冻结 / KDE Connect / MacroDroid / HMArkPriv 等。可重复打开。     │
-# └─────────────────────────────────────────────────────────────────────────┘
-aa start -b com.android.settings -a "com.android.settings.Settings\$NotificationAccessSettingsActivity"
-
-# ┌─────────────────────────────────────────────────────────────────────────┐
-# │ ✅ 可用：特殊访问权限（特殊应用权限）                                       │
-# ├─────────────────────────────────────────────────────────────────────────┤
-# │ 作用：打开容器内安卓的「特殊访问权限」总入口，相当于安卓设置里的             │
-# │       Settings > Apps > Special app access                             │
-# │ 里面能看到：显示在其他应用的上层（悬浮窗）/ 媒体管理应用 / 修改系统设置 /    │
-# │       通知使用权 / 闹钟和提醒 / 使用情况访问权限 / WLAN 控制               │
-# │ 典型用途：给投屏/自动化工具授予"悬浮窗"或"修改系统设置"权限。               │
-# │ 实测：界面标题「特殊访问权限」，上述 7 个条目完整列出。                      │
-# └─────────────────────────────────────────────────────────────────────────┘
-aa start -b com.android.settings -a "com.android.settings.Settings\$SpecialAccessSettingsActivity"
-
-# ┌─────────────────────────────────────────────────────────────────────────┐
-# │ ⚠️ 被系统拦截：无障碍设置（Accessibility）                                 │
-# ├─────────────────────────────────────────────────────────────────────────┤
-# │ 作用（理论）：打开容器内安卓的「无障碍」页面，可给自动化工具授予             │
-# │       模拟点击 / 读取屏幕内容的能力                                       │
-# │ 为什么重要：无障碍是自动化类 App（MacroDroid、Tasker、自动点击器）的        │
-# │       核心权限，没有它就干不了事。                                        │
-# │ 实测结果：**页面能启动、也会渲染，但渲染完立刻被系统关闭**，用户会看到        │
-# │       「为了隐私安全，不允许…」的提示。                                    │
-# │ 日志证据：                                                              │
-# │   WMS  scaleX from 0.035 to 1              ← 页面开始渲染                │
-# │   WMS  enableShow change from true to false ← 立刻被隐藏                │
-# │   WMS  aboutToDisappear                    ← 页面销毁                   │
-# │ 结论：不是"没这个页面"，是**系统安全策略主动拦截**。                         │
-# │       无障碍权限能完全控制设备（模拟任意操作、读屏幕），鸿蒙禁止程序化打开。   │
-# │ 补充：用户反馈"手动进设置也找不到入口" —— 卓易通把安卓设置入口直接隐藏了，    │
-# │       所以不是"用命令打开 vs 手动打开"的区别，是这个入口整体不可达。          │
-# │ 穷举验证（2026-11-04，全部失败）：                                          │
-# │   ① 4 个 Activity 变体全被拦截：                                          │
-# │      Settings$AccessibilitySettingsActivity                             │
-# │      accessibility.AccessibilitySettings                                │
-# │      Settings$AccessibilityDaltonizerSettingsActivity                   │
-# │      accessibility.AccessibilitySettingsActivity                        │
-# │   ② 容器数据目录被 SELinux 完全隔离：                                       │
-# │      /data/virt_service/rgm_hmos/anco_hmos_data  → Permission denied    │
-# │      （shell 和 hdc 都进不去，无法直接改 settings.db）                      │
-# │   ③ 卓易通 App 里没有安卓设置入口：                                         │
-# │      我的 ▸ 权限管理 → 只显示宿主 App 在鸿蒙侧的权限，不含容器内应用          │
-# │      我的 ▸ 设置    → 只有流量提醒/自动更新/隐私声明，无安卓设置              │
-# │   ④ hidumper -s AccessibilityManagerService → shell 权限拿不到数据        │
-# │ 结论：无障碍这条路在当前版本上完全不可达，没有绕过办法。                      │
-# │       替代方案见本节末尾「无障碍的替代方案」。                               │
-# └─────────────────────────────────────────────────────────────────────────┘
-aa start -b com.android.settings -a "com.android.settings.Settings\$AccessibilitySettingsActivity"
-
-# ┌─────────────────────────────────────────────────────────────────────────┐
-# │ ❓ 待确认：应用管理（已安装应用列表）                                       │
-# ├─────────────────────────────────────────────────────────────────────────┤
-# │ 作用（理论）：打开容器内安卓的「应用」页面，可查看/卸载容器内应用，           │
-# │       可清除应用数据、查看权限详情                                        │
-# │ 实测结果：多次测试均退回桌面（bundleName 仍是桌面），未成功。                │
-# │ 但用户反馈曾成功跳出过 —— 可能依赖特定系统版本或前置状态。                   │
-# │ 建议：使用前自己先试一次；若失败，可用下面的「应用设置」变体。                │
-# └─────────────────────────────────────────────────────────────────────────┘
-aa start -b com.android.settings -a "com.android.settings.Settings\$ManageApplicationsActivity"
-
-# ┌─────────────────────────────────────────────────────────────────────────┐
-# │ ❓ 备选：应用设置 Dashboard                                              │
-# ├─────────────────────────────────────────────────────────────────────────┤
-# │ 作用（理论）：应用管理的另一种入口（AppDashboardActivity），               │
-# │       在部分安卓版本上等同于"应用和通知"页。                              │
-# │ 实测结果：同样退回桌面。                                                │
-# └─────────────────────────────────────────────────────────────────────────┘
-aa start -b com.android.settings -a "com.android.settings.Settings\$AppDashboardActivity"
+aa start -b com.android.settings -a "com.android.settings.Settings\$NotificationAccessSettingsActivity"   # 通知使用权页
+aa start -b com.android.settings -a "com.android.settings.Settings\$SpecialAccessSettingsActivity"        # 特殊访问权限页
+aa start -b com.android.settings -a "com.android.settings.Settings\$ManageApplicationsActivity"          # 已装应用列表（待确认）
 ```
+
+**逐条说明**：
+
+| 命令 | 界面能看到什么 | 典型用途 | 实测 |
+|------|--------------|---------|------|
+| 通知使用权 | 容器内安卓应用列表，可逐个授予"读取通知"权限 | 给短信转发器、通知转发类 App 授权 | ✅ 可重复打开 |
+| 特殊访问权限 | 悬浮窗 / 媒体管理应用 / 修改系统设置 / 通知使用权 / 闹钟和提醒 / 使用情况访问权限 / WLAN 控制 | 给投屏、自动化工具授予悬浮窗或改设置权限 | ✅ 7 个条目完整列出 |
+| 已装应用列表 | 容器内应用清单，可卸载、清数据、看权限 | 管理容器内应用 | ❓ 多次测试退回桌面，用户反馈曾成功 |
+
+> **无障碍（AccessibilitySettingsActivity）已从手册移除** —— 2026-11-04 穷举验证确认
+> 这条路完全不可达：
+> - 4 个 Activity 变体全部被系统拦截（页面能启动、会渲染，但渲染完立刻被关闭）
+> - 容器数据目录 `/data/virt_service/rgm_hmos/anco_hmos_data` 被 SELinux 完全隔离
+>   （shell 和 hdc 都进不去）
+> - 卓易通 App 里也没有安卓设置入口（「我的 ▸ 权限管理」显示的是宿主 App 在鸿蒙侧的权限，
+>   「我的 ▸ 设置」只有流量提醒/自动更新/隐私声明）
+>
+> 无障碍的替代方案见 **11.1.1** 节 —— `uinput` + `uitest` 能覆盖它的绝大多数用途且更强。
 
 ### 11.1.1 无障碍的替代方案（重要）
 
@@ -996,30 +914,16 @@ aa start -b com.android.settings -a "com.android.settings.Settings\$AppDashboard
 **具体示例**：
 
 ```bash
-uitest dumpLayout -p /data/local/tmp/ui.json    # 导出整个界面的控件树（找按钮坐标用这个）
-uinput -T -c 540 1200                          # 点击指定坐标（替代无障碍的 click）
+uitest dumpLayout -p /data/local/tmp/ui.json    # 导出界面控件树（找按钮坐标）
+uinput -T -c 540 1200                          # 点击坐标
 uinput -t "要输入的文字"                          # 向当前焦点输入框输入文字
-uinput -T -m 540 2000 540 800 300              # 从(540,2000)滑到(540,800)，耗时300ms
-uinput -K -d 2 -u 2                            # 按返回键（替代无障碍的 performGlobalAction BACK）
-uinput -K -d 1 -u 1                            # 按 Home 键（回到桌面）
+uinput -T -m 540 2000 540 800 300              # 滑动，耗时300ms
+uinput -K -d 2 -u 2                            # 按返回键
+uinput -K -d 1 -u 1                            # 按 Home 键
 ```
 
-**给容器内自动化 App 的替代路径**：
-
-如果你原本是想给容器内的 MacroDroid / Tasker 授予无障碍做自动化，有个更好的办法 ——
-让它们**调用我们的 shell 通道**，而不是用无障碍：
-
-```bash
-sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -T -c 540 1200  # 点击坐标（MacroDroid Shell 动作里用）
-sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -K -d 2 -u 2    # 按返回键
-sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh power-shell wakeup     # 唤醒屏幕
-```
-
-> 好处：不用无障碍权限、不受"仅当前应用"限制、能跨应用操作、
-> 甚至能做无障碍做不了的事（改系统设置、强停应用、截图）。
->
-> 注意：这条路径要求 MacroDroid 能读写 `Download/HMArkPriv/`（hmdfs 已自动映射，
-> 见 11.3 节的路径说明）。
+> **为什么这套方案比无障碍更好**：不受"仅对当前应用生效"限制、能跨应用操作、
+> 不需要用户逐个 App 授权，还能做无障碍做不了的事（改系统设置、强停应用、截图）。
 
 ---
 
@@ -1043,58 +947,22 @@ sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh power-shell wakeup
 > ```
 
 ```bash
-# ┌─────────────────────────────────────────────────────────────────────────┐
-# │ 通用语法                                                                │
-# ├─────────────────────────────────────────────────────────────────────────┤
-# │ 说明：把 <android_package_name> 换成容器内安卓应用的包名，                 │
-# │       <main_activity_name> 换成它的主 Activity                          │
-# │ 提示：Activity 名写错不会报错（aa 永远返回 RC=0），只会退回桌面。           │
-# │       所以失败时请用下面的方法验证是否真的跳转。                           │
-# └─────────────────────────────────────────────────────────────────────────┘
-aa start -b <android_package_name> -a <main_activity_name>
-
-# ┌─────────────────────────────────────────────────────────────────────────┐
-# │ ✅ 实测可用：短信转发器（SmsForwarder）                                    │
-# ├─────────────────────────────────────────────────────────────────────────┤
-# │ 作用：直接启动容器内的短信转发器 App，不用先开卓易通再点图标。               │
-# │       配合 11.1 的「通知使用权」授权后，就能让它在后台转发短信到             │
-# │       微信/钉钉/Telegram/Webhook 等。                                   │
-# │ 实测：bundleName 变为 cn.ppps.forwarder，App 正常打开。                   │
-# │ 备注：如果这个包名在你的版本上不对，先用 aapt 查 APK 确认。                 │
-# └─────────────────────────────────────────────────────────────────────────┘
-aa start -b cn.ppps.forwarder -a cn.ppps.forwarder.activity.MainActivity
-
-# ┌─────────────────────────────────────────────────────────────────────────┐
-# │ ✅ 实测可用：KDE Connect                                                │
-# ├─────────────────────────────────────────────────────────────────────────┤
-# │ 作用：启动容器内的 KDE Connect，用于手机 ⇄ 电脑互传文件、                    │
-# │       共享剪贴板、远程输入、通知同步。                                     │
-# │ 实测：bundleName 变为 org.kde.kdeconnect_tp，界面显示已配对设备。           │
-# └─────────────────────────────────────────────────────────────────────────┘
-aa start -b org.kde.kdeconnect_tp -a org.kde.kdeconnect.UserInterface.MainActivity
+aa start -b <android_package_name> -a <main_activity_name>                            # 通用语法
+aa start -b cn.ppps.forwarder -a cn.ppps.forwarder.activity.MainActivity             # 短信转发器
+aa start -b org.kde.kdeconnect_tp -a org.kde.kdeconnect.UserInterface.MainActivity   # KDE Connect
 ```
 
-> **如何验证是否真的启动成功**（rc 永远是 0，不可信）：
-> ```bash
-> # 启动后等 5-6 秒，导出控件树，看 bundleName
-> uitest dumpLayout -p /data/local/tmp/probe.json
-> # 然后读文件里的 "bundleName"：
-> grep -o '"bundleName":"[^"]*"' /data/local/tmp/probe.json | sort -u
-> ```
-> - 出现目标包名 → 成功
-> - 只有 `com.ohos.sceneboard` → 失败，界面仍在桌面
+**说明**：
 
-### 11.3 在 MacroDroid 中调用宿主特权 **[实机]**
+| 命令 | 作用 | 实测 |
+|------|------|------|
+| 通用语法 | 把占位符换成容器内安卓应用的包名和主 Activity | — |
+| 短信转发器 | 启动容器内的 SmsForwarder，配合「通知使用权」授权后可后台转发短信到微信/钉钉/Telegram/Webhook | ✅ bundleName 变为 `cn.ppps.forwarder` |
+| KDE Connect | 启动容器内的 KDE Connect，用于手机 ⇄ 电脑互传文件、共享剪贴板、远程输入 | ✅ bundleName 变为 `org.kde.kdeconnect_tp` |
 
-```bash
-sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh power-shell wakeup      # 唤醒屏幕
-sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -T -c 630 1422   # 点击坐标(630,1422)
-sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -K -d 2 -u 2     # 按返回键
-```
-
-> **[实机]** 以上路径基于 hmdfs 跨沙盒共享机制：鸿蒙宿主的 `Download/HMArkPriv/` 自动映射到卓易通容器内的 `/sdcard/MyHarmonyOSDevice/Download/HMArkPriv/`。
-
----
+> **注意**：Activity 名写错不会报错（`aa` 永远返回 RC=0），只会退回桌面。
+> 验证方法：启动后等 5-6 秒，`uitest dumpLayout` 导出控件树，
+> 看 `bundleName` 是否变成目标包名（若仍是 `com.ohos.sceneboard` 说明失败）。
 
 ## 12. HDC 工具命令（电脑端）**[官方] [社区]**
 
@@ -1183,29 +1051,34 @@ hdc bm get --udid                # UDID
 
 ## 14. 常用系统参数速查
 
-| 参数 | 说明 | 验证 | 示例值 |
-|------|------|------|--------|
-| `const.product.name` | 设备名称 | [实机] | HUAWEI Mate 60 Pro |
-| `const.product.brand` | 品牌 | [实机] | HUAWEI |
-| `const.product.model` | 型号 | [实机] | ALN-AL00 / HBN-AL80 |
-| `const.product.software.version` | 软件版本 | [社区] | ALN-AL00 5.0.0.22 |
-| `const.ohos.apiversion` | API 版本 | [社区] | 12 |
-| `const.product.cpu.abilist` | CPU 架构 | [社区] | arm64-v8a |
-| `const.product.devicetype` | 设备类型 | [社区] | default / tablet / phone |
-| `const.product.developmentmode` | 开发者模式 | [社区] | 1 / 0 |
-| `const.build.version.release` | 系统发行版本 | [未验证] | - |
-| `hw_sc.build.platform.version` | HarmonyOS 核心版本 | [未验证] | - |
-| `const.bms.allowenterprisebundle` | 允许企业应用 | [社区] | true / false |
-
-> **[未验证]** `const.build.version.release` 和 `hw_sc.build.platform.version` 来自 HMArkPriv 原始文档，参数名是否准确未经官方文档确认。建议用 `param get | grep version` 模糊搜索确认实际参数名。
-
-### 模糊查询 **[实机]**
+> 这些参数用 `param get <key>` 查询。下面每条都已改成可直接执行的命令，
+> 点击即可在终端运行（示例值仅供参考，实际以你的设备为准）。
 
 ```bash
-param get | grep -E 'os.name|model|brand|version.release|cpu'
-param get | grep -E 'development|debug'
-param get
+param get const.product.name                # 设备名称
+param get const.product.brand               # 品牌
+param get const.product.model               # 型号
+param get const.product.software.version    # 软件版本
+param get const.ohos.apiversion             # API 版本
+param get const.product.cpu.abilist         # CPU 架构
+param get const.product.devicetype          # 设备类型
+param get const.product.developmentmode     # 开发者模式 1/0
+param get const.build.version.release       # 系统发行版本 [未验证]
+param get hw_sc.build.platform.version      # 鸿蒙核心版本 [未验证]
+param get const.bms.allowenterprisebundle   # 允许企业应用
 ```
+
+**模糊查询**（不知道确切参数名时用）：
+
+```bash
+param get | grep -E 'os.name|model|brand|version'   # 模糊查型号/版本
+param get | grep -E 'development|debug'             # 模糊查调试相关
+param get                                           # 列出全部参数
+```
+
+> **关于 [未验证] 的两条**：`const.build.version.release` 和
+> `hw_sc.build.platform.version` 来自原始文档，参数名未经官方确认。
+> 建议用上面的模糊查询自己确认实际名称。
 
 ---
 
