@@ -548,21 +548,21 @@
               "cmd": "power-shell setmode 600",
               "desc": "正常模式",
               "tags": [
-                "未验证"
+                "实机"
               ]
             },
             {
               "cmd": "power-shell setmode 601",
               "desc": "省电模式",
               "tags": [
-                "未验证"
+                "实机"
               ]
             },
             {
               "cmd": "power-shell setmode 602",
               "desc": "超级省电模式",
               "tags": [
-                "未验证"
+                "实机"
               ]
             }
           ]
@@ -1656,20 +1656,65 @@
           "name": "11.1 调起卓易通内隐藏的安卓系统设置",
           "items": [
             {
-              "cmd": "aa start -b com.android.settings -a com.android.settings.Settings\\$NotificationAccessSettingsActivity",
-              "desc": ""
+              "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$NotificationAccessSettingsActivity\"",
+              "desc": "打开容器内安卓的「通知使用权」页面（Notification Access）"
             },
             {
-              "cmd": "aa start -b com.android.settings -a com.android.settings.Settings\\$AccessibilitySettingsActivity",
-              "desc": ""
+              "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$SpecialAccessSettingsActivity\"",
+              "desc": "打开容器内安卓的「特殊访问权限」总入口，相当于安卓设置里的"
             },
             {
-              "cmd": "aa start -b com.android.settings -a com.android.settings.Settings\\$SpecialAccessSettingsActivity",
-              "desc": ""
+              "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$AccessibilitySettingsActivity\"",
+              "desc": "打开容器内安卓的「无障碍」页面，可给自动化工具授予"
             },
             {
-              "cmd": "aa start -b com.android.settings -a com.android.settings.Settings\\$ManageApplicationsActivity",
-              "desc": ""
+              "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$ManageApplicationsActivity\"",
+              "desc": "打开容器内安卓的「应用」页面，可查看/卸载容器内应用，"
+            },
+            {
+              "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$AppDashboardActivity\"",
+              "desc": "应用管理的另一种入口（AppDashboardActivity），"
+            }
+          ]
+        },
+        {
+          "name": "11.1.1 无障碍的替代方案（重要）",
+          "items": [
+            {
+              "cmd": "uitest dumpLayout -p /data/local/tmp/ui.json",
+              "desc": "导出整个界面的控件树（找按钮坐标用这个）"
+            },
+            {
+              "cmd": "uinput -T -c 540 1200",
+              "desc": "点击指定坐标（替代无障碍的 click）"
+            },
+            {
+              "cmd": "uinput -t \"要输入的文字\"",
+              "desc": "向当前焦点输入框输入文字"
+            },
+            {
+              "cmd": "uinput -T -m 540 2000 540 800 300",
+              "desc": "从(540,2000)滑到(540,800)，耗时300ms"
+            },
+            {
+              "cmd": "uinput -K -d 2 -u 2",
+              "desc": "按返回键（替代无障碍的 performGlobalAction BACK）"
+            },
+            {
+              "cmd": "uinput -K -d 1 -u 1",
+              "desc": "按 Home 键（回到桌面）"
+            },
+            {
+              "cmd": "sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -T -c 540 1200",
+              "desc": "点击坐标（MacroDroid Shell 动作里用）"
+            },
+            {
+              "cmd": "sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -K -d 2 -u 2",
+              "desc": "按返回键"
+            },
+            {
+              "cmd": "sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh power-shell wakeup",
+              "desc": "唤醒屏幕"
             }
           ]
         },
@@ -1678,15 +1723,15 @@
           "items": [
             {
               "cmd": "aa start -b <android_package_name> -a <main_activity_name>",
-              "desc": ""
+              "desc": "通用语法"
             },
             {
               "cmd": "aa start -b cn.ppps.forwarder -a cn.ppps.forwarder.activity.MainActivity",
-              "desc": ""
+              "desc": "直接启动容器内的短信转发器 App，不用先开卓易通再点图标。"
             },
             {
               "cmd": "aa start -b org.kde.kdeconnect_tp -a org.kde.kdeconnect.UserInterface.MainActivity",
-              "desc": ""
+              "desc": "启动容器内的 KDE Connect，用于手机 ⇄ 电脑互传文件、"
             }
           ]
         },
@@ -1698,15 +1743,15 @@
           "items": [
             {
               "cmd": "sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh power-shell wakeup",
-              "desc": ""
+              "desc": "唤醒屏幕"
             },
             {
               "cmd": "sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -T -c 630 1422",
-              "desc": ""
+              "desc": "点击坐标(630,1422)"
             },
             {
               "cmd": "sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -K -d 2 -u 2",
-              "desc": ""
+              "desc": "按返回键"
             }
           ]
         }

@@ -822,7 +822,31 @@ hdc tconn 127.0.0.1:5556
 
 > **[实机]** 以下命令在 HUAWEI Pura 70 Pro+（HarmonyOS 7.0）+ 卓易通环境上验证。
 >
-> **重要架构说明**：卓易通（`com.droi.tong`）/ 出境易（`com.easy.hmos.abroad`）运行在由 `rgm_hmos` / `isulad` 管理的轻量级容器虚拟机（ANCO 架构）中，拥有独立的网络命名空间与进程树。通过 `hmdfs` 共享文件系统实现鸿蒙宿主 ⇄ 容器的跨沙盒通信。
+> **重要架构说明**：卓易通 / 出境易运行在由 `rgm_hmos` / `isulad` 管理的轻量级容器虚拟机
+> （ANCO 架构）中，拥有独立的网络命名空间与进程树。通过 `hmdfs` 共享文件系统实现
+> 鸿蒙宿主 ⇄ 容器的跨沙盒通信。
+>
+> **包名对照（实测确认，容易搞混）**：
+>
+> | 包名 | 是什么 | 用途 |
+> |------|--------|------|
+> | `com.zhuoyi.appstore.lite` | 卓易通 App 本体（鸿蒙侧） | 用户点开的应用，有「发现/应用/我的」三个 Tab |
+> | `com.droi.tong` | 容器相关包 | 在 `bm dump -a` 列表里出现，但启动它不会有界面 |
+> | `com.easy.hmos.abroad` | 出境易（鸿蒙侧） | 另一款容器 App |
+> | `com.android.settings` | 容器内的安卓设置 | 靠 `aa start` 穿透进去，本文重点 |
+>
+> 检测设备是否装了卓易通，用 `bm dump -a | grep -c com.zhuoyi.appstore` 或
+> `grep -c com.droi.tong` 都可以，**不能**用 `grep -i android` / `grep -i anco`
+> —— 这些包名里都没有那两个词。
+>
+> **容器挂载点**（shell 无法访问，仅作了解）：
+> - `/data/virt_service/rgm_hmos/anco_hmos`（只读，容器系统镜像）
+> - `/data/virt_service/rgm_hmos/anco_hmos_data`（可写，容器 /data 分区）
+> 两者都被 SELinux 完全隔离，`ls` 和 `hdc file recv` 都被 `Permission denied`。
+>
+> **容器侧进程**（`ps -ef` 可见）：
+> `isulad`（容器运行时）/ `rgm_engine_plugin` / `rgm_manager` /
+> `anco_service_broker`（容器服务代理）/ `bms_broker`（包管理代理）/ `anco_audio`
 
 ### 11.1 调起卓易通内隐藏的安卓系统设置
 
@@ -873,41 +897,199 @@ hdc tconn 127.0.0.1:5556
 > **不能**用 `grep -i android` 或 `grep -i anco` —— 容器包的 bundleName 里没有这两个词。
 
 ```bash
-# ✅ [实机] 通知使用权（唯一可用的一个，注意双引号 + \$ 转义）
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ ✅ 可用：通知使用权                                                       │
+# ├─────────────────────────────────────────────────────────────────────────┤
+# │ 作用：打开容器内安卓的「通知使用权」页面（Notification Access）              │
+# │       这个页面在鸿蒙侧是看不到的 —— 卓易通把安卓设置入口全隐藏了，           │
+# │       只能靠这条命令绕过。                                                │
+# │ 里面能看到：容器内已安装的安卓应用列表，可逐个授予"读取通知"权限。           │
+# │       典型用途：给短信转发器、通知转发类 App 授权。                        │
+# │ 实测：界面标题「通知使用权」，列出 短信转发器 / 万步健康 / 雹 /             │
+# │       自动冻结 / KDE Connect / MacroDroid / HMArkPriv 等。可重复打开。     │
+# └─────────────────────────────────────────────────────────────────────────┘
 aa start -b com.android.settings -a "com.android.settings.Settings\$NotificationAccessSettingsActivity"
 
-# ❌ [实机] 无障碍设置（Activity 不存在）
-aa start -b com.android.settings -a "com.android.settings.Settings\$AccessibilitySettingsActivity"
-
-# ❌ [实机] 特殊应用权限（Activity 不存在）
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ ✅ 可用：特殊访问权限（特殊应用权限）                                       │
+# ├─────────────────────────────────────────────────────────────────────────┤
+# │ 作用：打开容器内安卓的「特殊访问权限」总入口，相当于安卓设置里的             │
+# │       Settings > Apps > Special app access                             │
+# │ 里面能看到：显示在其他应用的上层（悬浮窗）/ 媒体管理应用 / 修改系统设置 /    │
+# │       通知使用权 / 闹钟和提醒 / 使用情况访问权限 / WLAN 控制               │
+# │ 典型用途：给投屏/自动化工具授予"悬浮窗"或"修改系统设置"权限。               │
+# │ 实测：界面标题「特殊访问权限」，上述 7 个条目完整列出。                      │
+# └─────────────────────────────────────────────────────────────────────────┘
 aa start -b com.android.settings -a "com.android.settings.Settings\$SpecialAccessSettingsActivity"
 
-# ❌ [实机] 应用列表与权限详情（Activity 不存在）
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ ⚠️ 被系统拦截：无障碍设置（Accessibility）                                 │
+# ├─────────────────────────────────────────────────────────────────────────┤
+# │ 作用（理论）：打开容器内安卓的「无障碍」页面，可给自动化工具授予             │
+# │       模拟点击 / 读取屏幕内容的能力                                       │
+# │ 为什么重要：无障碍是自动化类 App（MacroDroid、Tasker、自动点击器）的        │
+# │       核心权限，没有它就干不了事。                                        │
+# │ 实测结果：**页面能启动、也会渲染，但渲染完立刻被系统关闭**，用户会看到        │
+# │       「为了隐私安全，不允许…」的提示。                                    │
+# │ 日志证据：                                                              │
+# │   WMS  scaleX from 0.035 to 1              ← 页面开始渲染                │
+# │   WMS  enableShow change from true to false ← 立刻被隐藏                │
+# │   WMS  aboutToDisappear                    ← 页面销毁                   │
+# │ 结论：不是"没这个页面"，是**系统安全策略主动拦截**。                         │
+# │       无障碍权限能完全控制设备（模拟任意操作、读屏幕），鸿蒙禁止程序化打开。   │
+# │ 补充：用户反馈"手动进设置也找不到入口" —— 卓易通把安卓设置入口直接隐藏了，    │
+# │       所以不是"用命令打开 vs 手动打开"的区别，是这个入口整体不可达。          │
+# │ 穷举验证（2026-11-04，全部失败）：                                          │
+# │   ① 4 个 Activity 变体全被拦截：                                          │
+# │      Settings$AccessibilitySettingsActivity                             │
+# │      accessibility.AccessibilitySettings                                │
+# │      Settings$AccessibilityDaltonizerSettingsActivity                   │
+# │      accessibility.AccessibilitySettingsActivity                        │
+# │   ② 容器数据目录被 SELinux 完全隔离：                                       │
+# │      /data/virt_service/rgm_hmos/anco_hmos_data  → Permission denied    │
+# │      （shell 和 hdc 都进不去，无法直接改 settings.db）                      │
+# │   ③ 卓易通 App 里没有安卓设置入口：                                         │
+# │      我的 ▸ 权限管理 → 只显示宿主 App 在鸿蒙侧的权限，不含容器内应用          │
+# │      我的 ▸ 设置    → 只有流量提醒/自动更新/隐私声明，无安卓设置              │
+# │   ④ hidumper -s AccessibilityManagerService → shell 权限拿不到数据        │
+# │ 结论：无障碍这条路在当前版本上完全不可达，没有绕过办法。                      │
+# │       替代方案见本节末尾「无障碍的替代方案」。                               │
+# └─────────────────────────────────────────────────────────────────────────┘
+aa start -b com.android.settings -a "com.android.settings.Settings\$AccessibilitySettingsActivity"
+
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ ❓ 待确认：应用管理（已安装应用列表）                                       │
+# ├─────────────────────────────────────────────────────────────────────────┤
+# │ 作用（理论）：打开容器内安卓的「应用」页面，可查看/卸载容器内应用，           │
+# │       可清除应用数据、查看权限详情                                        │
+# │ 实测结果：多次测试均退回桌面（bundleName 仍是桌面），未成功。                │
+# │ 但用户反馈曾成功跳出过 —— 可能依赖特定系统版本或前置状态。                   │
+# │ 建议：使用前自己先试一次；若失败，可用下面的「应用设置」变体。                │
+# └─────────────────────────────────────────────────────────────────────────┘
 aa start -b com.android.settings -a "com.android.settings.Settings\$ManageApplicationsActivity"
+
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ ❓ 备选：应用设置 Dashboard                                              │
+# ├─────────────────────────────────────────────────────────────────────────┤
+# │ 作用（理论）：应用管理的另一种入口（AppDashboardActivity），               │
+# │       在部分安卓版本上等同于"应用和通知"页。                              │
+# │ 实测结果：同样退回桌面。                                                │
+# └─────────────────────────────────────────────────────────────────────────┘
+aa start -b com.android.settings -a "com.android.settings.Settings\$AppDashboardActivity"
 ```
+
+### 11.1.1 无障碍的替代方案（重要）
+
+既然无障碍拿不到，那它原本能做的事怎么实现？**我们这套特权 shell 通道本身就是无障碍的替代品**，
+而且能力更强。
+
+| 无障碍的典型用途 | 我们的替代方案 | 能力对比 |
+|-----------------|---------------|---------|
+| 模拟点击 / 长按 / 滑动 | `uinput -T -c x y` / `-m` | ✅ 完全等价，甚至更精确（可指定毫秒级时长） |
+| 模拟按键（Home/Back/音量） | `uinput -K -d N -u N` | ✅ 完全等价 |
+| 读取屏幕内容（控件树） | `uitest dumpLayout -p file.json` | ✅ **更强** —— 能拿到每个控件的 text/bounds/clickable/type |
+| 按文字找控件再点击 | `uitest dumpLayout` + 解析 JSON 取坐标 + `uinput -T -c` | ✅ 可实现，约 1.4 秒一轮 |
+| 监听界面变化 | 轮询 `uitest dumpLayout`（50ms 一次不现实，1-2 秒一次可行） | ⚠️ 不如无障碍实时，但够用 |
+| 后台自动操作（不占前台） | `uinput` + `uitest` 都是 shell 层，不需要 App 前台 | ✅ 比无障碍更适合 |
+| 跨应用读取界面 | 同上，shell 权限能读任意界面的控件树 | ✅ 无障碍需要逐个应用授权，我们不需要 |
+
+**具体示例**：
+
+```bash
+uitest dumpLayout -p /data/local/tmp/ui.json    # 导出整个界面的控件树（找按钮坐标用这个）
+uinput -T -c 540 1200                          # 点击指定坐标（替代无障碍的 click）
+uinput -t "要输入的文字"                          # 向当前焦点输入框输入文字
+uinput -T -m 540 2000 540 800 300              # 从(540,2000)滑到(540,800)，耗时300ms
+uinput -K -d 2 -u 2                            # 按返回键（替代无障碍的 performGlobalAction BACK）
+uinput -K -d 1 -u 1                            # 按 Home 键（回到桌面）
+```
+
+**给容器内自动化 App 的替代路径**：
+
+如果你原本是想给容器内的 MacroDroid / Tasker 授予无障碍做自动化，有个更好的办法 ——
+让它们**调用我们的 shell 通道**，而不是用无障碍：
+
+```bash
+sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -T -c 540 1200  # 点击坐标（MacroDroid Shell 动作里用）
+sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -K -d 2 -u 2    # 按返回键
+sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh power-shell wakeup     # 唤醒屏幕
+```
+
+> 好处：不用无障碍权限、不受"仅当前应用"限制、能跨应用操作、
+> 甚至能做无障碍做不了的事（改系统设置、强停应用、截图）。
+>
+> 注意：这条路径要求 MacroDroid 能读写 `Download/HMArkPriv/`（hmdfs 已自动映射，
+> 见 11.3 节的路径说明）。
+
+---
 
 ### 11.2 穿透启动卓易通内的安卓应用
 
-> **[未验证]** 以下命令来自 HMArkPriv 原始文档。原理同上，通过 `aa start` 启动卓易通容器内的安卓应用。具体包名和 Activity 名称需根据实际安装的应用确认。
+> **[实机验证 2026-11-04]** 在 Pura 70 Pro+ + 卓易通环境上实测，两条示例命令**均可成功启动**。
+>
+> **原理**：和 11.1 相同，宿主的 `aa start` 把启动请求路由到容器内。
+> 只是这里的 `-b` 是容器内**安卓应用的包名**（不是 `com.android.settings`）。
+>
+> **注意**：这类命令**不需要 `$` 转义**（普通应用的主 Activity 名不含 `$`），
+> 但包名和 Activity 名必须与你设备上实际安装的版本匹配。
+>
+> **如何查容器内应用的包名/Activity**：
+> ```bash
+> # 1. 先打开卓易通，看它列出的安卓应用
+> # 2. 或从设备上已有的安卓 APK 反查：
+> #    aapt dump badging app.apk | grep -E "package|launchable-activity"
+> # 3. 或先启动到「通知使用权」页（11.1 第一条），
+> #    那个列表里的应用名对应容器内已安装的安卓应用
+> ```
 
 ```bash
-# ⚠️ [未验证] 通用语法
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ 通用语法                                                                │
+# ├─────────────────────────────────────────────────────────────────────────┤
+# │ 说明：把 <android_package_name> 换成容器内安卓应用的包名，                 │
+# │       <main_activity_name> 换成它的主 Activity                          │
+# │ 提示：Activity 名写错不会报错（aa 永远返回 RC=0），只会退回桌面。           │
+# │       所以失败时请用下面的方法验证是否真的跳转。                           │
+# └─────────────────────────────────────────────────────────────────────────┘
 aa start -b <android_package_name> -a <main_activity_name>
 
-# ⚠️ [未验证] 短信转发器
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ ✅ 实测可用：短信转发器（SmsForwarder）                                    │
+# ├─────────────────────────────────────────────────────────────────────────┤
+# │ 作用：直接启动容器内的短信转发器 App，不用先开卓易通再点图标。               │
+# │       配合 11.1 的「通知使用权」授权后，就能让它在后台转发短信到             │
+# │       微信/钉钉/Telegram/Webhook 等。                                   │
+# │ 实测：bundleName 变为 cn.ppps.forwarder，App 正常打开。                   │
+# │ 备注：如果这个包名在你的版本上不对，先用 aapt 查 APK 确认。                 │
+# └─────────────────────────────────────────────────────────────────────────┘
 aa start -b cn.ppps.forwarder -a cn.ppps.forwarder.activity.MainActivity
 
-# ⚠️ [未验证] KDE Connect
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ ✅ 实测可用：KDE Connect                                                │
+# ├─────────────────────────────────────────────────────────────────────────┤
+# │ 作用：启动容器内的 KDE Connect，用于手机 ⇄ 电脑互传文件、                    │
+# │       共享剪贴板、远程输入、通知同步。                                     │
+# │ 实测：bundleName 变为 org.kde.kdeconnect_tp，界面显示已配对设备。           │
+# └─────────────────────────────────────────────────────────────────────────┘
 aa start -b org.kde.kdeconnect_tp -a org.kde.kdeconnect.UserInterface.MainActivity
 ```
+
+> **如何验证是否真的启动成功**（rc 永远是 0，不可信）：
+> ```bash
+> # 启动后等 5-6 秒，导出控件树，看 bundleName
+> uitest dumpLayout -p /data/local/tmp/probe.json
+> # 然后读文件里的 "bundleName"：
+> grep -o '"bundleName":"[^"]*"' /data/local/tmp/probe.json | sort -u
+> ```
+> - 出现目标包名 → 成功
+> - 只有 `com.ohos.sceneboard` → 失败，界面仍在桌面
 
 ### 11.3 在 MacroDroid 中调用宿主特权 **[实机]**
 
 ```bash
-# 在 MacroDroid 的 Shell 动作中调用
-sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh power-shell wakeup
-sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -T -c 630 1422
-sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -K -d 2 -u 2
+sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh power-shell wakeup      # 唤醒屏幕
+sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -T -c 630 1422   # 点击坐标(630,1422)
+sh /sdcard/MyHarmonyOSDevice/Download/HMArkPriv/hmpriv_cli.sh uinput -K -d 2 -u 2     # 按返回键
 ```
 
 > **[实机]** 以上路径基于 hmdfs 跨沙盒共享机制：鸿蒙宿主的 `Download/HMArkPriv/` 自动映射到卓易通容器内的 `/sdcard/MyHarmonyOSDevice/Download/HMArkPriv/`。

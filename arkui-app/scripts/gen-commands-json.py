@@ -53,6 +53,27 @@ def clean(s):
     return s.strip()
 
 
+def make_summary(lines):
+    """
+    把框式注释块的多行内容压成一句摘要。
+    优先取「作用：」那行，否则取第一行有意义的文字。
+    长度限制在 60 字符内，适配侧边栏显示。
+    """
+    # 优先找 "作用：" 开头
+    for ln in lines:
+        if ln.startswith('作用'):
+            # 去掉 "作用：" 或 "作用（理论）："
+            v = re.sub(r'^作用（?[^）]*）?[：:]\s*', '', ln)
+            return v[:70]
+    # 其次找第一行非标题行
+    for ln in lines:
+        if ln and not ln.startswith('✅') and not ln.startswith('❌') and \
+           not ln.startswith('⚠️') and not ln.startswith('❓') and \
+           not ln.startswith('├') and not ln.startswith('└'):
+            return ln[:70]
+    return ''
+
+
 def extract_tags(text):
     """提取验证来源标注，返回 (纯净文本, tags)"""
     tags = []
@@ -82,6 +103,9 @@ def main():
             cur_grp = {'name': name, 'items': []}
             cur_cat['groups'].append(cur_grp)
         return cur_grp
+
+    # 框式注释缓冲区：收集 `# ┌───┐ ... # └───┘` 块里的说明文字
+    box_desc = []
 
     def add_item(cmd, desc, tags):
         cmd = cmd.strip()
@@ -150,21 +174,41 @@ def main():
 
         # 代码块内：`cmd  # desc`
         if in_code:
+            stripped = line.strip()
+
+            # ---- 框式注释块：收集 ┌ ... └ 之间的文字 ----
+            if stripped.startswith('#') and ('┌' in stripped or '├' in stripped or
+                                             '│' in stripped or '└' in stripped):
+                # 提取 │ 后面的内容
+                m_box = re.match(r'^#\s*│\s*(.*?)\s*│?\s*$', stripped)
+                if m_box:
+                    content = m_box.group(1).strip()
+                    # 去掉纯分隔线
+                    if content and not re.match(r'^[─-]+$', content):
+                        box_desc.append(content)
+                continue
+
+            # ---- 命令行 ----
             m = re.match(r'^\s*([a-zA-Z_][\w\.-]*(?:\s+[^#]*?)?)\s*#\s*(.+)$', line)
             if m:
                 cmd = m.group(1).strip()
                 desc_raw = m.group(2).strip()
                 desc, tags = extract_tags(desc_raw)
+                # 若有框式注释，优先用它（更详细）
+                if box_desc:
+                    desc = make_summary(box_desc)
+                    box_desc = []
                 add_item(cmd, desc, tags)
+                continue
             else:
-                # 没有注释的纯命令行
-                stripped = line.strip()
+                # 没有行内注释的纯命令行
                 if stripped and not stripped.startswith('#'):
                     first = stripped.split()[0] if stripped.split() else ''
-                    if re.match(r'^[a-z_][\w\.-]*$', first) and first not in (
+                    if re.match(r'^[a-z_][\w\./-]*$', first) and first not in (
                             'if', 'then', 'else', 'fi', 'for', 'do', 'done', 'echo', 'export'):
-                        # 只收有明确命令名的
-                        add_item(stripped, '', [])
+                        desc = make_summary(box_desc) if box_desc else ''
+                        box_desc = []
+                        add_item(stripped, desc, [])
             continue
 
         # 表格行：| `cmd` | desc | tag |
