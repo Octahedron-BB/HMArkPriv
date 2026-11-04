@@ -302,19 +302,15 @@ export struct AppManageTab {
   }
 
   /**
-   * 准备卸载应用（带核心白名单拦截）
+   * 准备卸载应用
    */
   askUninstall(): void {
     if (!this.selectedApp) {
       return;
     }
-    if (this.isCoreApp(this.selectedApp.bundleName)) {
-      this.showToast(`⚠️ 该应用属于系统核心基础组件，受安全策略保护，禁止卸载！`);
-      return;
-    }
     this.confirmActionType = 'uninstall';
     this.confirmTitle = `免 Root 卸载应用`;
-    this.confirmMessage = `确定要卸载「${this.selectedApp.label}」吗？\n包名：${this.selectedApp.bundleName}`;
+    this.confirmMessage = `确定要卸载「${this.selectedApp.label}」吗？\n包名：${this.selectedApp.bundleName}\n（系统将通过 BMS 执行卸载）`;
     this.isConfirmOpen = true;
   }
 
@@ -736,13 +732,7 @@ export struct AppManageTab {
             this.ActionButton('⚙️', '系统设置', '打开权限/存储页', '#0284C7', () => this.handleOpenSettings())
           }
           GridItem() {
-            if (this.isCoreApp(this.selectedApp!.bundleName)) {
-              this.ActionButton('🔒', '系统核心', '受系统保护', '#475569', () => {
-                this.showToast('系统关键服务组件，禁止卸载');
-              })
-            } else {
-              this.ActionButton('❌', '免Root卸载', '移除该应用', '#991B1B', () => this.askUninstall())
-            }
+            this.ActionButton('❌', '免Root卸载', '移除该应用', '#991B1B', () => this.askUninstall())
           }
           GridItem() {
             this.ActionButton('ℹ️', '全息元数据', '原始导出信息', '#059669', () => this.handleViewDetail())

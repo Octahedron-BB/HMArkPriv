@@ -127,3 +127,21 @@ HarmonyOS localhost HongMeng Kernel 1.13.0 #1 SMP Sat Sep 26 04:44:55 UTC 2026 a
 ```
 
 实测单次跨沙盒 RPC 往返耗时 `< 250ms`，守护进程已在您的手机后台稳定运行。
+
+---
+
+## 阶段六：HMArkPriv 原生 ArkUI 应用重构与 Phase 3 应用管理实装（2026-11-04）
+
+### 6.1 原生化升级与架构闭环
+1. **全面退役 HTML 控制台**：移除废弃的静态 HTML 与混合模式，全面聚焦于纯血鸿蒙原生 ArkUI 应用开发。
+2. **极速总线模式安全闭环**：实现「令牌鉴权 (Token Auth) + 总开关 (Master Switch) + 审计日志 (Audit Log)」三层防护，阻断未经授权的越权调用。
+3. **充电防熄屏动态感知**：在首页快捷动作中增加常亮开关，通过 `daemon.sh` 监听 `hilog` 电池插入类型动态切换屏幕超时。
+4. **指令手册精简排版**：全面优化 292 条指令侧边栏注释，精简字符长度，消除折行与截断。
+
+### 6.2 Phase 3 应用管理深度落地（真机实测验证）
+在 HUAWEI Pura 70 Pro+ 上对底层 AbilityManager、BundleManager 与 AccessTokenManager 进行了逆向与真机测试，成功实装第三个主 Tab「应用管理」：
+1. **150ms 极速加载**：调用 `bm dump -a -l` 一次性拉取 223 个已装应用名称与包名，支持中文/拼音模糊过滤与分类芯片切换。
+2. **智能动态启动**：深入排查发现鸿蒙应用并非统一使用 `EntryAbility`（如 Canva 为 `EditorAbility`，梅斯医学为 `MedSciAbility`，WPS 为多模块 `DocumentAbility`）。重构 `startApp` 引入动态 Ability 解析，实现 100% 成功唤醒前台。
+3. **专属权限透视面板**：解析 `reqPermissions` 与 `reqPermissionStates`，首次在鸿蒙提权工具中清晰区分 `[可修改]`（用户动态权限）与 `[系统默认]`（底层固定权限），并支持一键跳转系统设置。
+4. **运行状态实时指示**：对齐 `ps -ef` 进程表，在卡片上动态点亮 `🟢 活跃` 徽章，使 `aa force-stop` 强杀后台操作具备直观的视觉反馈。
+5. **深度重置与免 Root 卸载**：支持 `bm clean -d` 穿透重置应用私有数据，以及 `bm uninstall -u 100` 免 Root 卸载能力。
