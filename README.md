@@ -106,6 +106,7 @@ id      # uid=2000(shell) gid=2000(shell) groups=...,1006(file_manager)...
 
 | 文档 | 内容 |
 |------|------|
+| [`docs/TODO.md`](docs/TODO.md) | **待办清单**：各阶段进度、待研究项、已知技术债 |
 | [`arkui-app/README.md`](arkui-app/README.md) | ArkUI App 完整说明：架构、编译、模拟器调试、踩坑记录 |
 | [`arkui-app/docs/HMArkPriv-App-技术方案.md`](arkui-app/docs/HMArkPriv-App-技术方案.md) | App 技术设计（IPC、页面、6 阶段开发路径） |
 | [`docs/跨应用调用协议.md`](docs/跨应用调用协议.md) | **跨应用调用**：让其他 App 调用特权 shell（方案 A / C+，含 SDK 与示例） |
