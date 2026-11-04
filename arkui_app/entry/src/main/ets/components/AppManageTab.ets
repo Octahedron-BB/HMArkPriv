@@ -1,23 +1,18 @@
 import { BusClient } from '../services/BusClient';
 import { CommandBuilder } from '../utils/CommandBuilder';
-import { ResponseParser, AppItem } from '../utils/ResponseParser';
+import { ResponseParser, AppItem, PermissionItem } from '../utils/ResponseParser';
 import { CommandResult } from '../model/CommandResult';
 import { promptAction } from '@kit.ArkUI';
 
 /**
- * AppManageTab — 应用管理主面板
+ * AppManageTab — 应用管理与深度管控面板
  *
- * 核心功能：
- * 1. 150ms 极速加载已安装应用全量清单（中文名 + 包名）。
- * 2. 搜索（支持名称与包名匹配）与多维分类（全部 / 第三方 / 系统预装）。
- * 3. 点击任一应用弹出专属操作选项面板：
- *    - 启动应用 (aa start)
- *    - 强行停止 (aa force-stop)
- *    - 清理缓存 (bm clean -c)
- *    - 彻底清空数据 (bm clean -d，带二次确认)
- *    - 一键重置权限 (atm perm -r -b)
- *    - 免 Root 卸载 (bm uninstall -u 100，带二次确认)
- *    - 全息详情 / 权限透视 (bm dump -n)
+ * 核心升级：
+ * 1. 150ms 极速加载全量应用列表，动态关联运行状态（活跃中/已停止）。
+ * 2. 智能动态启动：自动解析任意应用的 mainAbility，支持多 HAP 穿透。
+ * 3. 强行停止反馈：杀灭真实进程组并实时刷新进程列表，消除多任务卡片困惑。
+ * 4. 专属权限透视面板：全息提取权限列表，严格区分「用户可控（可修改）」与「系统默认」，支持一键直达系统权限设置。
+ * 5. 安全核心保护：白名单硬核保护系统核心组件，杜绝误卸载风险。
  */
 @Component
 export struct AppManageTab {
@@ -27,6 +22,8 @@ export struct AppManageTab {
   @State allApps: AppItem[] = [];
   // 过滤后的应用清单
   @State displayApps: AppItem[] = [];
+  // 正在运行的应用包名集合
+  @State runningPackages: string[] = [];
   // 计数统计
   @State allAppsCount: number = 0;
   @State userAppsCount: number = 0;
@@ -45,7 +42,13 @@ export struct AppManageTab {
   // 正在执行操作
   @State isBusy: boolean = false;
 
-  // 详情弹窗
+  // 权限透视弹窗
+  @State isPermissionOpen: boolean = false;
+  @State permLoading: boolean = false;
+  @State permissions: PermissionItem[] = [];
+  @State userPermCount: number = 0;
+
+  // 详情弹窗 (原始元数据)
   @State isDetailOpen: boolean = false;
   @State detailLoading: boolean = false;
   @State detailContent: string = '';
@@ -61,7 +64,23 @@ export struct AppManageTab {
   }
 
   /**
-   * 极速加载全量应用列表
+   * 判断是否为系统核心保护组件（禁止卸载）
+   */
+  isCoreApp(bundle: string): boolean {
+    const core = [
+      'com.huawei.hmos.settings',
+      'com.huawei.hmos.desktop',
+      'com.huawei.hmos.camera',
+      'com.huawei.hmos.photos',
+      'com.huawei.systemui',
+      'com.huawei.hmsapp.appgallery',
+      'com.octahedron.hmpriv'
+    ];
+    return core.includes(bundle) || bundle.startsWith('com.huawei.system.');
+  }
+
+  /**
+   * 极速加载全量应用列表与运行状态
    */
   async loadApps(): Promise<void> {
     if (this.isLoading) {
@@ -77,11 +96,38 @@ export struct AppManageTab {
       } else {
         this.showToast(`获取应用列表失败：exitCode=${result.exitCode}`);
       }
+
+      // 异步刷新进程运行状态
+      this.refreshRunningProcesses();
     } catch (err) {
       this.showToast(`加载异常: ${err}`);
     } finally {
       this.isLoading = false;
     }
+  }
+
+  /**
+   * 查询并同步当前运行中的进程
+   */
+  async refreshRunningProcesses(): Promise<void> {
+    try {
+      const psRes: CommandResult = await this.busClient.execute(CommandBuilder.queryRunningProcesses());
+      if (psRes.success) {
+        const runningSet = ResponseParser.parseRunningProcesses(psRes.output);
+        const list: string[] = [];
+        runningSet.forEach((pkg) => list.push(pkg));
+        this.runningPackages = list;
+      }
+    } catch (_e) {
+      // 容错
+    }
+  }
+
+  /**
+   * 判断某个包是否当前正在运行
+   */
+  isAppRunning(bundle: string): boolean {
+    return this.runningPackages.includes(bundle);
   }
 
   /**
@@ -136,7 +182,7 @@ export struct AppManageTab {
    */
   showToast(msg: string): void {
     try {
-      promptAction.showToast({ message: msg, duration: 2200 });
+      promptAction.showToast({ message: msg, duration: 2500 });
     } catch (_e) {
       // 忽略
     }
@@ -148,6 +194,7 @@ export struct AppManageTab {
   openOptions(app: AppItem): void {
     this.selectedApp = app;
     this.isOptionsOpen = true;
+    this.refreshRunningProcesses();
   }
 
   /**
@@ -158,22 +205,25 @@ export struct AppManageTab {
   }
 
   /**
-   * 启动应用
+   * 智能启动应用（动态 Ability 解析）
    */
   async handleStartApp(): Promise<void> {
     if (!this.selectedApp || this.isBusy) {
       return;
     }
     const b = this.selectedApp.bundleName;
+    const name = this.selectedApp.label;
     this.isBusy = true;
-    this.showToast(`正在启动 ${this.selectedApp.label}...`);
+    this.showToast(`正在智能调起 ${name}...`);
     try {
-      const res = await this.busClient.execute(CommandBuilder.startApp(b, 'EntryAbility'));
-      if (res.success) {
-        this.showToast(`已请求启动：${this.selectedApp.label}`);
+      const res = await this.busClient.execute(CommandBuilder.startApp(b));
+      if (res.success && !res.output.includes('error:')) {
+        this.showToast(`已成功唤醒前台：${name}`);
         this.closeOptions();
+        // 延时刷新活跃状态
+        setTimeout(() => this.refreshRunningProcesses(), 1000);
       } else {
-        this.showToast(`启动返回: ${res.output || `exitCode=${res.exitCode}`}`);
+        this.showToast(`启动反馈: ${res.output || `exitCode=${res.exitCode}`}`);
       }
     } finally {
       this.isBusy = false;
@@ -181,18 +231,20 @@ export struct AppManageTab {
   }
 
   /**
-   * 强行停止
+   * 强行停止（彻底杀灭进程组）
    */
   async handleForceStop(): Promise<void> {
     if (!this.selectedApp || this.isBusy) {
       return;
     }
     const b = this.selectedApp.bundleName;
+    const name = this.selectedApp.label;
     this.isBusy = true;
     try {
       const res = await this.busClient.execute(CommandBuilder.forceStopApp(b));
       if (res.success) {
-        this.showToast(`已强制停止进程：${this.selectedApp.label}`);
+        this.showToast(`已强杀 ${name} 进程组（已彻底停止运行）`);
+        await this.refreshRunningProcesses();
         this.closeOptions();
       } else {
         this.showToast(`停止失败: ${res.output}`);
@@ -200,6 +252,18 @@ export struct AppManageTab {
     } finally {
       this.isBusy = false;
     }
+  }
+
+  /**
+   * 打开系统设置该应用专页
+   */
+  async handleOpenSettings(): Promise<void> {
+    if (!this.selectedApp) {
+      return;
+    }
+    const b = this.selectedApp.bundleName;
+    this.showToast(`正在跳转系统设置...`);
+    await this.busClient.execute(CommandBuilder.openAppSystemSettings(b));
   }
 
   /**
@@ -214,10 +278,10 @@ export struct AppManageTab {
     try {
       const res = await this.busClient.execute(CommandBuilder.cleanCache(b));
       if (res.success) {
-        this.showToast(`缓存已清理：${this.selectedApp.label}`);
+        this.showToast(`缓存已释放：${this.selectedApp.label}`);
         this.closeOptions();
       } else {
-        this.showToast(`清理缓存结果: ${res.output}`);
+        this.showToast(`清理结果: ${res.output}`);
       }
     } finally {
       this.isBusy = false;
@@ -232,16 +296,20 @@ export struct AppManageTab {
       return;
     }
     this.confirmActionType = 'cleanData';
-    this.confirmTitle = `清空应用数据`;
-    this.confirmMessage = `确定要彻底清空「${this.selectedApp.label}」的所有数据吗？\n包括内部数据库、缓存、账号状态，此操作不可逆！`;
+    this.confirmTitle = `彻底清空应用数据`;
+    this.confirmMessage = `确定要重置「${this.selectedApp.label}」的所有数据吗？\n将清除私有数据库、缓存、账号状态，此操作不可逆！`;
     this.isConfirmOpen = true;
   }
 
   /**
-   * 准备卸载应用（弹窗确认）
+   * 准备卸载应用（带核心白名单拦截）
    */
   askUninstall(): void {
     if (!this.selectedApp) {
+      return;
+    }
+    if (this.isCoreApp(this.selectedApp.bundleName)) {
+      this.showToast(`⚠️ 该应用属于系统核心基础组件，受安全策略保护，禁止卸载！`);
       return;
     }
     this.confirmActionType = 'uninstall';
@@ -272,7 +340,7 @@ export struct AppManageTab {
         if (res.success) {
           this.showToast(`已成功卸载：${name}`);
           this.closeOptions();
-          this.loadApps(); // 刷新列表
+          this.loadApps();
         } else {
           this.showToast(`卸载结果: ${res.output}`);
         }
@@ -293,15 +361,48 @@ export struct AppManageTab {
     this.isBusy = true;
     try {
       const res = await this.busClient.execute(CommandBuilder.resetAppPermissions(b));
-      this.showToast(res.success ? `权限已重置为初始状态` : `重置结果: ${res.output}`);
-      this.closeOptions();
+      this.showToast(res.success ? `已重置授权为初始状态` : `重置结果: ${res.output}`);
+      if (this.isPermissionOpen) {
+        this.handleViewPermissions();
+      }
     } finally {
       this.isBusy = false;
     }
   }
 
   /**
-   * 查看应用全息详情
+   * 查看专属权限透视面板
+   */
+  async handleViewPermissions(): Promise<void> {
+    if (!this.selectedApp) {
+      return;
+    }
+    const b = this.selectedApp.bundleName;
+    this.isPermissionOpen = true;
+    this.permLoading = true;
+
+    try {
+      const res = await this.busClient.execute(CommandBuilder.appDetail(b));
+      if (res.success) {
+        const parsed = ResponseParser.parseAppPermissions(res.output);
+        this.permissions = parsed;
+        let userCount = 0;
+        for (let i = 0; i < parsed.length; i++) {
+          if (parsed[i].isUserGrant) {
+            userCount++;
+          }
+        }
+        this.userPermCount = userCount;
+      } else {
+        this.showToast(`权限查询失败: ${res.output}`);
+      }
+    } finally {
+      this.permLoading = false;
+    }
+  }
+
+  /**
+   * 查看应用全息详情（原始元数据）
    */
   async handleViewDetail(): Promise<void> {
     if (!this.selectedApp) {
@@ -323,7 +424,7 @@ export struct AppManageTab {
   }
 
   /**
-   * 生成头像背景色
+   * 生成应用头像渐变底色
    */
   getAvatarColor(name: string): string {
     const colors = ['#0284C7', '#0D9488', '#16A34A', '#CA8A04', '#EA580C', '#7C3AED', '#DB2777'];
@@ -430,6 +531,11 @@ export struct AppManageTab {
         this.ActionSheetModal()
       }
 
+      // ===== 权限透视专属弹窗 =====
+      if (this.isPermissionOpen && this.selectedApp) {
+        this.PermissionModal()
+      }
+
       // ===== 高危动作二次确认弹窗 =====
       if (this.isConfirmOpen && this.selectedApp) {
         this.ConfirmModal()
@@ -442,26 +548,6 @@ export struct AppManageTab {
     }
     .width('100%')
     .height('100%')
-  }
-
-  getUserAppCount(): number {
-    let count = 0;
-    for (let i = 0; i < this.allApps.length; i++) {
-      if (!this.allApps[i].isSystem) {
-        count++;
-      }
-    }
-    return count;
-  }
-
-  getSystemAppCount(): number {
-    let count = 0;
-    for (let i = 0; i < this.allApps.length; i++) {
-      if (this.allApps[i].isSystem) {
-        count++;
-      }
-    }
-    return count;
   }
 
   /**
@@ -493,12 +579,12 @@ export struct AppManageTab {
   @Builder
   AppCard(app: AppItem) {
     Row() {
-      // 头像
+      // 科技感个性头像
       Stack() {
-        Circle({ width: 40, height: 40 })
+        Circle({ width: 42, height: 42 })
           .fill(this.getAvatarColor(app.label))
         Text(app.label.substring(0, 1).toUpperCase())
-          .fontSize(16)
+          .fontSize(17)
           .fontWeight(FontWeight.Bold)
           .fontColor('#FFFFFF')
       }
@@ -514,6 +600,20 @@ export struct AppManageTab {
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .layoutWeight(1)
+
+          // 运行状态指示
+          if (this.isAppRunning(app.bundleName)) {
+            Row() {
+              Circle({ width: 6, height: 6 }).fill('#4ADE80').margin({ right: 4 })
+              Text('活跃')
+                .fontSize(10)
+                .fontColor('#4ADE80')
+            }
+            .backgroundColor('#064E3B')
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .borderRadius(4)
+            .margin({ left: 6 })
+          }
 
           Text(app.isSystem ? '系统' : '用户')
             .fontSize(10)
@@ -536,7 +636,7 @@ export struct AppManageTab {
       .layoutWeight(1)
 
       // 右侧操作触发器
-      Text('操作 >')
+      Text('管控 >')
         .fontSize(12)
         .fontColor('#38BDF8')
         .margin({ left: 8 })
@@ -582,12 +682,21 @@ export struct AppManageTab {
           .margin({ right: 12 })
 
           Column() {
-            Text(this.selectedApp!.label)
-              .fontSize(16)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#F1F5F9')
+            Row() {
+              Text(this.selectedApp!.label)
+                .fontSize(16)
+                .fontWeight(FontWeight.Bold)
+                .fontColor('#F1F5F9')
+
+              // 运行状态小徽章
+              Text(this.isAppRunning(this.selectedApp!.bundleName) ? '🟢 活跃运行中' : '⚪ 未运行')
+                .fontSize(11)
+                .fontColor(this.isAppRunning(this.selectedApp!.bundleName) ? '#4ADE80' : '#94A3B8')
+                .margin({ left: 8 })
+            }
+
             Text(this.selectedApp!.bundleName)
-              .fontSize(12)
+              .fontSize(11)
               .fontColor('#94A3B8')
               .margin({ top: 2 })
           }
@@ -602,42 +711,59 @@ export struct AppManageTab {
             .onClick(() => this.closeOptions())
         }
         .width('100%')
-        .padding({ bottom: 16 })
+        .padding({ bottom: 14 })
 
         Divider().color('#334155').margin({ bottom: 12 })
 
         // 操作动作清单
         Grid() {
           GridItem() {
-            this.ActionButton('🚀', '启动应用', '拉起前台', '#0284C7', () => this.handleStartApp())
+            this.ActionButton('🚀', '启动应用', '智能唤醒前台', '#0284C7', () => this.handleStartApp())
           }
           GridItem() {
-            this.ActionButton('🛑', '强行停止', '击毙进程', '#DC2626', () => this.handleForceStop())
+            this.ActionButton('🛑', '强行停止', '击毙进程组', '#DC2626', () => this.handleForceStop())
+          }
+          GridItem() {
+            this.ActionButton('🛡️', '查看权限', '标明可修改与状态', '#8B5CF6', () => this.handleViewPermissions())
           }
           GridItem() {
             this.ActionButton('🧹', '清理缓存', '释放临时空间', '#D97706', () => this.handleCleanCache())
           }
           GridItem() {
-            this.ActionButton('🗑️', '彻底清空数据', '重置应用存储', '#B91C1C', () => this.askCleanData())
+            this.ActionButton('🗑️', '彻底清空数据', '重置私有数据', '#B91C1C', () => this.askCleanData())
           }
           GridItem() {
-            this.ActionButton('🔄', '重置权限', '恢复初始授权', '#4F46E5', () => this.handleResetPerms())
+            this.ActionButton('⚙️', '系统设置', '打开权限/存储页', '#0284C7', () => this.handleOpenSettings())
           }
           GridItem() {
-            this.ActionButton('❌', '免Root卸载', '移除该应用', '#991B1B', () => this.askUninstall())
+            if (this.isCoreApp(this.selectedApp!.bundleName)) {
+              this.ActionButton('🔒', '系统核心', '受系统保护', '#475569', () => {
+                this.showToast('系统关键服务组件，禁止卸载');
+              })
+            } else {
+              this.ActionButton('❌', '免Root卸载', '移除该应用', '#991B1B', () => this.askUninstall())
+            }
           }
           GridItem() {
-            this.ActionButton('ℹ️', '全息透视', '权限与元数据', '#059669', () => this.handleViewDetail())
+            this.ActionButton('ℹ️', '全息元数据', '原始导出信息', '#059669', () => this.handleViewDetail())
           }
         }
         .columnsTemplate('1fr 1fr')
         .columnsGap(10)
         .rowsGap(10)
         .width('100%')
-        .margin({ bottom: 20 })
+        .margin({ bottom: 14 })
+
+        // 提示注脚
+        Text('💡 提示：强行停止会立即终结该应用的实际进程组；多任务界面的历史卡片为系统桌面留存的静态快照。')
+          .fontSize(11)
+          .fontColor('#64748B')
+          .lineHeight(16)
+          .width('100%')
+          .margin({ bottom: 10 })
       }
       .width('100%')
-      .padding(20)
+      .padding(18)
       .backgroundColor('#1A2234')
       .borderRadius({ topLeft: 16, topRight: 16 })
     }
@@ -679,6 +805,149 @@ export struct AppManageTab {
     .width('100%')
     .enabled(!this.isBusy)
     .onClick(onClick)
+  }
+
+  /**
+   * 权限透视专属弹窗
+   */
+  @Builder
+  PermissionModal() {
+    Stack({ alignContent: Alignment.Center }) {
+      Rect()
+        .width('100%')
+        .height('100%')
+        .fill('#CC000000')
+        .onClick(() => {
+          this.isPermissionOpen = false;
+        })
+
+      Column() {
+        // 头部
+        Row() {
+          Column() {
+            Text(`🛡️ 权限清单透视`)
+              .fontSize(16)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#38BDF8')
+
+            Text(this.selectedApp ? `${this.selectedApp.label} · 共 ${this.permissions.length} 项 (可修改 ${this.userPermCount} 项)` : '')
+              .fontSize(11)
+              .fontColor('#94A3B8')
+              .margin({ top: 2 })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Button('关闭')
+            .fontSize(12)
+            .fontColor('#94A3B8')
+            .backgroundColor('#334155')
+            .height(28)
+            .onClick(() => {
+              this.isPermissionOpen = false;
+            })
+        }
+        .width('100%')
+        .padding({ bottom: 12 })
+
+        Divider().color('#334155').margin({ bottom: 8 })
+
+        if (this.permLoading) {
+          LoadingProgress()
+            .width(32)
+            .height(32)
+            .color('#38BDF8')
+            .margin(24)
+        } else if (this.permissions.length === 0) {
+          Column() {
+            Text('该应用未声明任何系统权限')
+              .fontSize(13)
+              .fontColor('#64748B')
+          }
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
+        } else {
+          List({ space: 6 }) {
+            ForEach(this.permissions, (item: PermissionItem) => {
+              ListItem() {
+                Row() {
+                  Column() {
+                    Row() {
+                      Text(item.friendlyName)
+                        .fontSize(14)
+                        .fontWeight(FontWeight.Medium)
+                        .fontColor('#F8FAFC')
+
+                      // 可修改 vs 系统默认徽章
+                      Text(item.isUserGrant ? '可修改' : '系统默认')
+                        .fontSize(10)
+                        .fontColor(item.isUserGrant ? '#38BDF8' : '#64748B')
+                        .backgroundColor(item.isUserGrant ? '#0C4A6E' : '#1E293B')
+                        .padding({ left: 6, right: 6, top: 1, bottom: 1 })
+                        .borderRadius(4)
+                        .margin({ left: 6 })
+                    }
+
+                    Text(item.name)
+                      .fontSize(10)
+                      .fontColor('#64748B')
+                      .fontFamily('monospace')
+                      .margin({ top: 2 })
+                  }
+                  .alignItems(HorizontalAlign.Start)
+                  .layoutWeight(1)
+
+                  // 授权状态
+                  Text(item.isGranted ? '已允许' : '未允许')
+                    .fontSize(11)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor(item.isGranted ? '#4ADE80' : '#94A3B8')
+                    .backgroundColor(item.isGranted ? '#064E3B' : '#1E293B')
+                    .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                    .borderRadius(4)
+                }
+                .width('100%')
+                .padding(10)
+                .backgroundColor('#151F33')
+                .borderRadius(8)
+              }
+            }, (p: PermissionItem) => p.name)
+          }
+          .layoutWeight(1)
+          .width('100%')
+        }
+
+        Divider().color('#334155').margin({ top: 8, bottom: 10 })
+
+        // 底部快捷动作
+        Row() {
+          Button('⚙️ 去系统设置修改')
+            .fontSize(12)
+            .backgroundColor('#0284C7')
+            .fontColor('#FFFFFF')
+            .height(34)
+            .layoutWeight(1)
+            .margin({ right: 8 })
+            .onClick(() => this.handleOpenSettings())
+
+          Button('🔄 一键重置授权')
+            .fontSize(12)
+            .backgroundColor('#334155')
+            .fontColor('#FBBF24')
+            .height(34)
+            .layoutWeight(1)
+            .onClick(() => this.handleResetPerms())
+        }
+        .width('100%')
+      }
+      .width('92%')
+      .height('75%')
+      .padding(16)
+      .backgroundColor('#1E293B')
+      .borderRadius(14)
+    }
+    .width('100%')
+    .height('100%')
   }
 
   /**
@@ -741,7 +1010,7 @@ export struct AppManageTab {
   }
 
   /**
-   * 应用全息详情弹窗
+   * 应用全息详情弹窗 (原始元数据)
    */
   @Builder
   DetailModal() {
@@ -756,7 +1025,7 @@ export struct AppManageTab {
 
       Column() {
         Row() {
-          Text('📊 应用全息元数据')
+          Text('📊 原始全息元数据')
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
             .fontColor('#38BDF8')

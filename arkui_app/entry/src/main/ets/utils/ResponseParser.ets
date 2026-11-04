@@ -35,6 +35,15 @@ export interface AppItem {
   bundleName: string;
   label: string;
   isSystem: boolean;
+  isRunning?: boolean;
+}
+
+export interface PermissionItem {
+  name: string;
+  friendlyName: string;
+  isUserGrant: boolean;
+  isGranted: boolean;
+  rawState: number;
 }
 
 interface RawDumpItem {
@@ -51,6 +60,65 @@ export interface BatteryInfo {
 
 /** 合法包名：至少一个点分隔的段，只含字母数字下划线 */
 const BUNDLE_RE = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$/;
+
+interface RawBundleDump {
+  reqPermissions?: string[];
+  reqPermissionStates?: number[];
+}
+
+const FRIENDLY_PERMISSION_MAP: Record<string, string> = {
+  'ohos.permission.LOCATION': '精确定位',
+  'ohos.permission.APPROXIMATELY_LOCATION': '模糊定位',
+  'ohos.permission.LOCATION_IN_BACKGROUND': '后台定位',
+  'ohos.permission.CAMERA': '相机拍摄',
+  'ohos.permission.MICROPHONE': '麦克风录音',
+  'ohos.permission.READ_PASTEBOARD': '读取剪贴板',
+  'ohos.permission.READ_CALENDAR': '读取日历',
+  'ohos.permission.WRITE_CALENDAR': '写入日历',
+  'ohos.permission.READ_MEDIA': '读取多媒体',
+  'ohos.permission.READ_IMAGEVIDEO': '读取图片与视频',
+  'ohos.permission.READ_AUDIO': '读取音频',
+  'ohos.permission.READ_DOCUMENT': '读取文档',
+  'ohos.permission.WRITE_MEDIA': '写入多媒体',
+  'ohos.permission.WRITE_IMAGEVIDEO': '保存图片与视频',
+  'ohos.permission.WRITE_AUDIO': '写入音频',
+  'ohos.permission.WRITE_DOCUMENT': '写入文档',
+  'ohos.permission.APP_TRACKING_CONSENT': '应用追踪与广告',
+  'ohos.permission.DISTRIBUTED_DATASYNC': '跨设备协同',
+  'ohos.permission.ACTIVITY_MOTION': '运动健康与计步',
+  'ohos.permission.READ_HEALTH_DATA': '读取健康数据',
+  'ohos.permission.INTERNET': '互联网访问',
+  'ohos.permission.GET_NETWORK_INFO': '获取网络信息',
+  'ohos.permission.GET_WIFI_INFO': '获取Wi-Fi信息',
+  'ohos.permission.GET_BUNDLE_INFO': '读取应用列表',
+  'ohos.permission.VIBRATE': '振动控制',
+  'ohos.permission.STORE_PERSISTENT_DATA': '持久化数据存储',
+  'ohos.permission.PRIVACY_WINDOW': '防录屏隐私保护',
+  'ohos.permission.KEEP_BACKGROUND_RUNNING': '后台长任务运行'
+};
+
+const USER_GRANT_SET = new Set<string>([
+  'ohos.permission.LOCATION',
+  'ohos.permission.APPROXIMATELY_LOCATION',
+  'ohos.permission.LOCATION_IN_BACKGROUND',
+  'ohos.permission.CAMERA',
+  'ohos.permission.MICROPHONE',
+  'ohos.permission.READ_PASTEBOARD',
+  'ohos.permission.READ_CALENDAR',
+  'ohos.permission.WRITE_CALENDAR',
+  'ohos.permission.READ_MEDIA',
+  'ohos.permission.READ_IMAGEVIDEO',
+  'ohos.permission.READ_AUDIO',
+  'ohos.permission.READ_DOCUMENT',
+  'ohos.permission.WRITE_MEDIA',
+  'ohos.permission.WRITE_IMAGEVIDEO',
+  'ohos.permission.WRITE_AUDIO',
+  'ohos.permission.WRITE_DOCUMENT',
+  'ohos.permission.APP_TRACKING_CONSENT',
+  'ohos.permission.DISTRIBUTED_DATASYNC',
+  'ohos.permission.ACTIVITY_MOTION',
+  'ohos.permission.READ_HEALTH_DATA'
+]);
 
 export class ResponseParser {
   /** 去掉行尾 CR（鸿蒙命令输出多为 CRLF） */
@@ -154,6 +222,59 @@ export class ResponseParser {
       });
     }
     return list;
+  }
+
+  /**
+   * 解析应用的权限列表，区分可修改的动态权限与系统默认权限
+   */
+  static parseAppPermissions(raw: string): PermissionItem[] {
+    const result: PermissionItem[] = [];
+    const idx = raw.indexOf('{');
+    if (idx < 0) {
+      return result;
+    }
+    const jsonStr = raw.substring(idx);
+    try {
+      const data = JSON.parse(jsonStr) as RawBundleDump;
+      const perms = data.reqPermissions || [];
+      const states = data.reqPermissionStates || [];
+      for (let i = 0; i < perms.length; i++) {
+        const p = perms[i];
+        const st = i < states.length ? states[i] : -1;
+        const isUser = USER_GRANT_SET.has(p);
+        const friendly = FRIENDLY_PERMISSION_MAP[p] || p.replace('ohos.permission.', '');
+        const granted = (st === 0);
+        result.push({
+          name: p,
+          friendlyName: friendly,
+          isUserGrant: isUser,
+          isGranted: granted,
+          rawState: st
+        });
+      }
+    } catch (_e) {
+      // 容错
+    }
+    return result;
+  }
+
+  /**
+   * 解析 ps -ef 结果提取正在运行的应用包名集合
+   */
+  static parseRunningProcesses(raw: string): Set<string> {
+    const set = new Set<string>();
+    const lines = ResponseParser.splitLines(raw);
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      const parts = line.split(/\s+/);
+      if (parts.length >= 8) {
+        const cmd = parts[parts.length - 1];
+        if (cmd && cmd.includes('.') && !cmd.includes('/') && !cmd.startsWith('[')) {
+          set.add(cmd);
+        }
+      }
+    }
+    return set;
   }
 
   /**

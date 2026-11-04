@@ -66,9 +66,19 @@ export class CommandBuilder {
     return `bm dump -n ${bundle}`;
   }
 
-  /** 启动应用 ⚠️ 无输出，需先 appDetail 校验包存在 */
-  static startApp(bundle: string, ability: string = 'EntryAbility'): string {
-    return `aa start -b ${bundle} -a ${ability}`;
+  /** 启动应用：自动动态解析 mainAbility 并支持 entry 模块多 HAP 穿透 */
+  static startApp(bundle: string): string {
+    return `MAIN=$(bm dump -n ${bundle} 2>/dev/null | grep -E '"mainAbility": "[^"]+"' | head -n 1 | sed 's/.*"mainAbility": "\\([^"]*\\)".*/\\1/'); [ -z "$MAIN" ] && MAIN="EntryAbility"; aa start -b ${bundle} -a "$MAIN" 2>&1 || aa start -b ${bundle} -m entry -a "$MAIN" 2>&1`;
+  }
+
+  /** 打开系统设置中该应用的专属设置页（权限/通知/存储） */
+  static openAppSystemSettings(bundle: string): string {
+    return `aa start -a com.huawei.hmos.settings.MainAbility -b com.huawei.hmos.settings -U 'application_info_entry' --ps bundleName ${bundle}`;
+  }
+
+  /** 查询当前所有正在运行的应用进程 */
+  static queryRunningProcesses(): string {
+    return `ps -ef`;
   }
 
   /** 强制停止 ⚠️ 无输出但生效 */
