@@ -27,3 +27,4 @@ arkui-app/local.properties
 .workbuddy-ai/
 arkui-app/scripts/verify-result.md
 .tmp/
+core/hmprivd.exe
