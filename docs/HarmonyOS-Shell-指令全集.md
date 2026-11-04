@@ -818,7 +818,7 @@ hdc tconn 127.0.0.1:5556
 
 ---
 
-## 11. 卓易通（ANCO）安卓沙盒穿透实战
+## 11. 安卓容器穿透（卓易通 / 出境易）
 
 > **[实机]** 以下命令在 HUAWEI Pura 70 Pro+（HarmonyOS 7.0）+ 卓易通环境上验证。
 >
@@ -848,7 +848,7 @@ hdc tconn 127.0.0.1:5556
 > `isulad`（容器运行时）/ `rgm_engine_plugin` / `rgm_manager` /
 > `anco_service_broker`（容器服务代理）/ `bms_broker`（包管理代理）/ `anco_audio`
 
-### 11.1 调起卓易通内隐藏的安卓系统设置
+### 11.1 打开容器内的安卓系统设置（卓易通/出境易通用）
 
 > **[实机验证 2026-11-04]** 在 Pura 70 Pro+ (HBN-AL80 / 7.0.0.109) + 卓易通环境上逐条实测。
 >
@@ -875,7 +875,7 @@ hdc tconn 127.0.0.1:5556
 ```bash
 aa start -b com.android.settings -a "com.android.settings.Settings\$NotificationAccessSettingsActivity"   # 通知使用权页
 aa start -b com.android.settings -a "com.android.settings.Settings\$SpecialAccessSettingsActivity"        # 特殊访问权限页
-aa start -b com.android.settings -a "com.android.settings.Settings\$ManageApplicationsActivity"          # 已装应用列表（待确认）
+aa start -b com.android.settings -a "com.android.settings.Settings\$ManageApplicationsActivity"          # 已装应用列表（约10秒）
 ```
 
 **逐条说明**：
@@ -884,7 +884,7 @@ aa start -b com.android.settings -a "com.android.settings.Settings\$ManageApplic
 |------|--------------|---------|------|
 | 通知使用权 | 容器内安卓应用列表，可逐个授予"读取通知"权限 | 给短信转发器、通知转发类 App 授权 | ✅ 可重复打开 |
 | 特殊访问权限 | 悬浮窗 / 媒体管理应用 / 修改系统设置 / 通知使用权 / 闹钟和提醒 / 使用情况访问权限 / WLAN 控制 | 给投屏、自动化工具授予悬浮窗或改设置权限 | ✅ 7 个条目完整列出 |
-| 已装应用列表 | 容器内应用清单，可卸载、清数据、看权限 | 管理容器内应用 | ❓ 多次测试退回桌面，用户反馈曾成功 |
+| 已装应用列表 | 容器内应用清单（名称+大小），点进去可卸载/强停/看权限 | 管理容器内应用 | ✅ 需等约 10 秒渲染 |
 
 > **无障碍（AccessibilitySettingsActivity）已从手册移除** —— 2026-11-04 穷举验证确认
 > 这条路完全不可达：
@@ -927,42 +927,116 @@ uinput -K -d 1 -u 1                            # 按 Home 键
 
 ---
 
-### 11.2 穿透启动卓易通内的安卓应用
+### 11.2 启动容器内的安卓应用
 
-> **[实机验证 2026-11-04]** 在 Pura 70 Pro+ + 卓易通环境上实测，两条示例命令**均可成功启动**。
->
-> **原理**：和 11.1 相同，宿主的 `aa start` 把启动请求路由到容器内。
-> 只是这里的 `-b` 是容器内**安卓应用的包名**（不是 `com.android.settings`）。
->
-> **注意**：这类命令**不需要 `$` 转义**（普通应用的主 Activity 名不含 `$`），
-> 但包名和 Activity 名必须与你设备上实际安装的版本匹配。
->
-> **如何查容器内应用的包名/Activity**：
-> ```bash
-> # 1. 先打开卓易通，看它列出的安卓应用
-> # 2. 或从设备上已有的安卓 APK 反查：
-> #    aapt dump badging app.apk | grep -E "package|launchable-activity"
-> # 3. 或先启动到「通知使用权」页（11.1 第一条），
-> #    那个列表里的应用名对应容器内已安装的安卓应用
-> ```
+> **[实机验证 2026-11-04]** 原理和 11.1 相同，`aa start` 把启动请求路由进容器。
+> 区别是这里的 `-b` 写容器内**安卓应用的包名**，不是 `com.android.settings`。
 
 ```bash
-aa start -b <android_package_name> -a <main_activity_name>                            # 通用语法
-aa start -b cn.ppps.forwarder -a cn.ppps.forwarder.activity.MainActivity             # 短信转发器
-aa start -b org.kde.kdeconnect_tp -a org.kde.kdeconnect.UserInterface.MainActivity   # KDE Connect
+aa start -b <android_package_name> -a <main_activity_name>   # 启动容器内任意安卓应用
 ```
 
-**说明**：
+**参数说明**：
 
-| 命令 | 作用 | 实测 |
-|------|------|------|
-| 通用语法 | 把占位符换成容器内安卓应用的包名和主 Activity | — |
-| 短信转发器 | 启动容器内的 SmsForwarder，配合「通知使用权」授权后可后台转发短信到微信/钉钉/Telegram/Webhook | ✅ bundleName 变为 `cn.ppps.forwarder` |
-| KDE Connect | 启动容器内的 KDE Connect，用于手机 ⇄ 电脑互传文件、共享剪贴板、远程输入 | ✅ bundleName 变为 `org.kde.kdeconnect_tp` |
+| 参数 | 含义 |
+|------|------|
+| `-b <android_package_name>` | 容器内安卓应用的包名，形如 `com.example.app` |
+| `-a <main_activity_name>` | 该应用的主 Activity，形如 `com.example.app.MainActivity` |
 
-> **注意**：Activity 名写错不会报错（`aa` 永远返回 RC=0），只会退回桌面。
+> **这类命令不需要 `$` 转义**（普通应用的主 Activity 名不含 `$`），
+> 只有 `com.android.settings` 那种内部类 Activity 才需要（见 11.1）。
+>
+> **Activity 名写错不会报错**（`aa` 永远返回 RC=0），只会退回桌面。
 > 验证方法：启动后等 5-6 秒，`uitest dumpLayout` 导出控件树，
 > 看 `bundleName` 是否变成目标包名（若仍是 `com.ohos.sceneboard` 说明失败）。
+
+---
+
+### 11.3 查询容器内已安装的应用
+
+> **[实机验证 2026-11-04]** 用容器内安卓设置的应用管理页，可以看到容器里装了什么。
+
+```bash
+aa start -b com.android.settings -a "com.android.settings.Settings\$ManageApplicationsActivity"   # 容器内应用列表
+```
+
+**实测看到的内容**（等约 10 秒渲染完）：
+
+```
+应用管理
+├── 搜索应用
+├── 雹                4.56 MB
+├── 出境服务框架       567 MB
+├── 出境服务助手       10.09 MB
+├── 短信转发器         105 MB
+└── 高德地图           16.38 kB
+...
+```
+
+点任意应用可进入「应用信息」页，能看到：
+
+- 版本号（如 `版本 3.5.0.260224`）
+- 卸载 / 强行停止
+- 通知管理
+- 各项权限的当前授权状态（位置信息、相机、麦克风、通讯录、日历、电话、信息、通话记录、附近设备…）
+
+**其他入口**：11.1 的「通知使用权」和「特殊访问权限」页也能看到容器内应用列表，
+但那两个页面只列出与权限相关的应用子集，想看全部已装应用用上面的应用管理页。
+
+> **为什么等待时间要这么长**：容器内 Activity 首次启动需要先拉起安卓运行时，
+> 实测冷启动 8-10 秒才渲染完。等 3-4 秒就 dumpLayout 会误判成"打不开"。
+
+> **关于包名**：这三个页面**只显示应用的中文名，不显示包名**。
+> 容器内的安卓包名无法从鸿蒙 shell 侧查询（`bm dump -a` 里没有，
+> `bm dump -n <android_pkg>` 也报 not found）。
+>
+> 要拿到包名，只能从 APK 文件反查（在电脑上执行）：
+> ```bash
+> # 方法一：aapt（Android SDK build-tools 里自带）
+> aapt dump badging app.apk | grep -E "^package|launchable-activity"
+> # 输出示例：
+> #   package: name='com.example.app' versionCode='1' ...
+> #   launchable-activity: name='com.example.app.MainActivity' ...
+>
+> # 方法二：用 apktool 解包看 AndroidManifest.xml
+> apktool d app.apk -o out && grep -E "package=|android:name" out/AndroidManifest.xml | head -5
+> ```
+> 拿到包名和 Activity 后，用 11.2 的语法就能启动它。
+
+---
+
+### 11.4 出境易同样适用
+
+> **[实机验证 2026-11-04]** 出境易是另一款安卓容器 App，
+> **11.1 / 11.2 / 11.3 的所有命令对它一样有效**，命令完全不用改。
+
+```bash
+aa start -b com.easy.hmos.abroad -a EntryAbility   # 打开出境易
+```
+
+**验证过程**：先打开出境易，再执行 11.1 的穿透命令，结果与卓易通一致：
+
+| 命令 | 结果 |
+|------|------|
+| 通知使用权 | ✅ 正常打开，标题「通知使用权」，列出容器内应用 |
+| 特殊访问权限 | ✅ 正常打开，7 个条目完整 |
+| 应用列表 | ✅ 正常打开，列出应用名和大小 |
+
+**包名对照（实测）**：
+
+| 包名 | 是什么 | 说明 |
+|------|--------|------|
+| `com.easy.hmos.abroad` | 出境易的安装包（`bm dump -n` 可查到这个） | 启动它用 `-a EntryAbility` |
+| `com.easy.abroad` | 出境易实际运行时的 UI 进程名（`dumpLayout` 显示这个） | 两个名字都指向同一个 App |
+| `com.droi.tong` | 卓易通的安装包 | 启动它用 `-a EntryAbility` |
+| `com.zhuoyi.appstore.lite` | 卓易通实际运行时的 UI 进程名 | — |
+
+> **为什么两个 App 能共用同一套命令**：它们都是 ANCO 容器架构的宿主，
+> 底层都依赖 `rgm_hmos` / `isulad` 提供的容器运行时。
+> 宿主侧的 `aa start -b com.android.settings` 由系统按当前活动的容器路由进去，
+> 所以不需要区分是哪个宿主。
+
+---
 
 ## 12. HDC 工具命令（电脑端）**[官方] [社区]**
 

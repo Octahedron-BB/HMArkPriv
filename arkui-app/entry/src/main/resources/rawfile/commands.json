@@ -1668,10 +1668,10 @@
       ]
     },
     {
-      "name": "11. 卓易通（ANCO）安卓沙盒穿透实战",
+      "name": "11. 安卓容器穿透（卓易通 / 出境易）",
       "groups": [
         {
-          "name": "11.1 调起卓易通内隐藏的安卓系统设置",
+          "name": "11.1 打开容器内的安卓系统设置（卓易通/出境易通用）",
           "items": [
             {
               "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$NotificationAccessSettingsActivity\"",
@@ -1683,7 +1683,7 @@
             },
             {
               "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$ManageApplicationsActivity\"",
-              "desc": "已装应用列表（待确认）"
+              "desc": "已装应用列表（约10秒）"
             }
           ]
         },
@@ -1717,19 +1717,29 @@
           ]
         },
         {
-          "name": "11.2 穿透启动卓易通内的安卓应用",
+          "name": "11.2 启动容器内的安卓应用",
           "items": [
             {
               "cmd": "aa start -b <android_package_name> -a <main_activity_name>",
-              "desc": "通用语法"
-            },
+              "desc": "启动容器内任意安卓应用"
+            }
+          ]
+        },
+        {
+          "name": "11.3 查询容器内已安装的应用",
+          "items": [
             {
-              "cmd": "aa start -b cn.ppps.forwarder -a cn.ppps.forwarder.activity.MainActivity",
-              "desc": "短信转发器"
-            },
+              "cmd": "aa start -b com.android.settings -a \"com.android.settings.Settings\\$ManageApplicationsActivity\"",
+              "desc": "容器内应用列表"
+            }
+          ]
+        },
+        {
+          "name": "11.4 出境易同样适用",
+          "items": [
             {
-              "cmd": "aa start -b org.kde.kdeconnect_tp -a org.kde.kdeconnect.UserInterface.MainActivity",
-              "desc": "KDE Connect"
+              "cmd": "aa start -b com.easy.hmos.abroad -a EntryAbility",
+              "desc": "打开出境易"
             }
           ]
         }

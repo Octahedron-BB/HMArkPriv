@@ -72,9 +72,11 @@ export class CommandIndex {
 
     const result: CommandCategory[] = [];
     for (const cat of CommandIndex.doc.categories) {
+      // 分类名命中时，整分类的所有条目都算命中
+      const catHit = cat.name.toLowerCase().includes(kw);
       const groups: CommandGroup[] = [];
       for (const g of cat.groups) {
-        const groupHit = g.name.toLowerCase().includes(kw);
+        const groupHit = catHit || g.name.toLowerCase().includes(kw);
         const items: CommandItem[] = [];
         for (const it of g.items) {
           if (groupHit ||
