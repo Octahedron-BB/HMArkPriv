@@ -36,6 +36,8 @@ const TAG = 'CrossAppHandler';
 
 /** 外部调用使用的 action */
 export const ACTION_EXECUTE = 'hmpriv.execute';
+/** 外部调用申请极速总线令牌使用的 action */
+export const ACTION_REQUEST_TOKEN = 'hmpriv.request_token';
 
 /** resultCode 常量 */
 export const RESULT_OK = 0;
@@ -53,6 +55,7 @@ export interface ReplyParams {
   exitCode?: number;
   durationMs?: number;
   error?: string;
+  token?: string;
 }
 
 /**
@@ -62,12 +65,14 @@ export interface ReplyParams {
 export interface PendingCall {
   /** 调用方 bundleName */
   caller: string;
-  /** 请求执行的命令 */
+  /** 请求执行的命令或授权描述 */
   cmd: string;
   /** 是否已在白名单（true 则不需要确认） */
   trusted: boolean;
   /** 时间戳 */
   time: number;
+  /** 是否为极速总线令牌申请 */
+  isTokenRequest?: boolean;
 }
 
 export class CrossAppHandler {
@@ -96,10 +101,10 @@ export class CrossAppHandler {
   }
 
   /**
-   * 判断一个 Want 是否是外部命令调用请求。
+   * 判断一个 Want 是否是外部命令调用请求或令牌申请。
    */
   static isExternalCall(want: Want): boolean {
-    return want.action === ACTION_EXECUTE;
+    return want.action === ACTION_EXECUTE || want.action === ACTION_REQUEST_TOKEN;
   }
 
   /**
@@ -113,9 +118,48 @@ export class CrossAppHandler {
     want: Want,
   ): Promise<void> {
     const caller = want.bundleName ?? 'unknown';
-    hilog.info(DOMAIN, TAG, `external call from "${caller}"`);
+    hilog.info(DOMAIN, TAG, `external call (${want.action}) from "${caller}"`);
 
-    // 1. 解析参数
+    // 检查黑名单
+    const isBlocked = await TrustManager.isBlocked(context, caller);
+    if (isBlocked) {
+      hilog.warn(DOMAIN, TAG, `blocked caller: "${caller}"`);
+      await CrossAppHandler.reply(context, RESULT_DENIED, {
+        error: 'caller is in blacklist',
+      });
+      return;
+    }
+
+    // 记录调用（供用户在「开放接口」页审计）
+    await TrustManager.recordCall(context, caller);
+
+    // 1. 申请极速总线令牌请求
+    if (want.action === ACTION_REQUEST_TOKEN) {
+      const trusted = await TrustManager.isTrusted(context, caller);
+      if (trusted) {
+        const busDir = BusDirManager.findAccessibleBusDir();
+        const token = await TrustManager.generateToken(context, caller, busDir);
+        await CrossAppHandler.reply(context, RESULT_OK, { token: token });
+        return;
+      }
+
+      // 未在白名单，挂起等待用户授权极速总线
+      CrossAppHandler.pending = {
+        caller: caller,
+        cmd: '申请后台「极速总线模式」授权令牌',
+        trusted: false,
+        time: Date.now(),
+        isTokenRequest: true,
+      };
+      CrossAppHandler.pendingWant = want;
+      CrossAppHandler.pendingContext = context;
+      if (CrossAppHandler.listener) {
+        CrossAppHandler.listener();
+      }
+      return;
+    }
+
+    // 2. 弹窗授权模式：执行命令请求
     const cmd = CrossAppHandler.extractCmd(want);
     if (!cmd) {
       hilog.warn(DOMAIN, TAG, 'missing or invalid cmd parameter');
@@ -127,10 +171,7 @@ export class CrossAppHandler {
 
     hilog.info(DOMAIN, TAG, `cmd: "${cmd}"`);
 
-    // 记录调用（供用户在「开放接口」页审计）
-    await TrustManager.recordCall(context, caller);
-
-    // 2. 查白名单
+    // 查白名单
     const trusted = await TrustManager.isTrusted(context, caller);
     hilog.info(DOMAIN, TAG, `caller trusted: ${trusted}`);
 
@@ -140,12 +181,13 @@ export class CrossAppHandler {
       return;
     }
 
-    // 3. 白名单外：挂起等用户确认
+    // 白名单外：挂起等用户确认
     CrossAppHandler.pending = {
       caller: caller,
       cmd: cmd,
       trusted: false,
       time: Date.now(),
+      isTokenRequest: false,
     };
     CrossAppHandler.pendingWant = want;
     CrossAppHandler.pendingContext = context;
@@ -158,7 +200,7 @@ export class CrossAppHandler {
   }
 
   /**
-   * 用户点了「允许」→ 执行。
+   * 用户点了「允许」→ 执行或签发令牌。
    */
   static async approve(): Promise<void> {
     const p = CrossAppHandler.pending;
@@ -167,14 +209,21 @@ export class CrossAppHandler {
       hilog.warn(DOMAIN, TAG, 'approve called but no pending call');
       return;
     }
-    hilog.info(DOMAIN, TAG, `user approved: ${p.cmd}`);
+    hilog.info(DOMAIN, TAG, `user approved: ${p.cmd} (tokenReq=${p.isTokenRequest})`);
     CrossAppHandler.pending = null;
     CrossAppHandler.pendingWant = null;
     CrossAppHandler.pendingContext = null;
     if (CrossAppHandler.listener) {
       CrossAppHandler.listener();
     }
-    await CrossAppHandler.executeAndReply(ctx, p.cmd);
+
+    if (p.isTokenRequest) {
+      const busDir = BusDirManager.findAccessibleBusDir();
+      const token = await TrustManager.generateToken(ctx, p.caller, busDir);
+      await CrossAppHandler.reply(ctx, RESULT_OK, { token: token });
+    } else {
+      await CrossAppHandler.executeAndReply(ctx, p.cmd);
+    }
   }
 
   /**
@@ -310,6 +359,9 @@ export class CrossAppHandler {
       }
       if (params.error !== undefined) {
         parameters['error'] = params.error;
+      }
+      if (params.token !== undefined) {
+        parameters['token'] = params.token;
       }
       await context.terminateSelfWithResult({
         resultCode: resultCode,

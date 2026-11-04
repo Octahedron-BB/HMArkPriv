@@ -47,6 +47,8 @@ struct Index {
   @State pendingCaller: string = '';
   /** 待确认请求的命令 */
   @State pendingCmd: string = '';
+  /** 是否为极速总线模式令牌申请 */
+  @State isTokenRequest: boolean = false;
   private busClient: BusClient = new BusClient(DEFAULT_BUS_DIR);
 
   aboutToAppear(): void {
@@ -76,14 +78,16 @@ struct Index {
   syncPending(): void {
     const p = CrossAppHandler.getPending();
     if (p) {
-      hilog.info(0x9201, 'Index', `syncPending: ${p.caller} -> ${p.cmd}`);
+      hilog.info(0x9201, 'Index', `syncPending: ${p.caller} -> ${p.cmd} (tokenReq=${p.isTokenRequest})`);
       this.pendingCaller = p.caller;
       this.pendingCmd = p.cmd;
+      this.isTokenRequest = p.isTokenRequest ?? false;
       this.hasPending = true;
     } else {
       this.hasPending = false;
       this.pendingCaller = '';
       this.pendingCmd = '';
+      this.isTokenRequest = false;
     }
   }
 
@@ -616,10 +620,10 @@ struct Index {
     Column() {
       // 标题
       Row() {
-        Text('🔐')
+        Text(this.isTokenRequest ? '🔑' : '🔐')
           .fontSize(20)
           .margin({ right: 8 })
-        Text('外部应用请求执行命令')
+        Text(this.isTokenRequest ? '申请「极速总线模式」授权令牌' : '外部应用请求执行命令')
           .fontSize(15)
           .fontColor('#E2E8F0')
           .fontWeight(FontWeight.Bold)
@@ -629,7 +633,7 @@ struct Index {
       .margin({ bottom: 12 })
 
       // 调用方
-      Text('调用方')
+      Text('调用方应用')
         .fontSize(11)
         .fontColor('#64748B')
         .width('100%')
@@ -640,8 +644,8 @@ struct Index {
         .width('100%')
         .margin({ top: 2, bottom: 12 })
 
-      // 命令
-      Text('要执行的命令')
+      // 内容说明
+      Text(this.isTokenRequest ? '申请权限' : '要执行的命令')
         .fontSize(11)
         .fontColor('#64748B')
         .width('100%')
@@ -656,7 +660,9 @@ struct Index {
         .margin({ top: 4, bottom: 12 })
 
       // 风险提示
-      Text('该命令将以 shell（UID 2000）权限执行，可能读写文件、模拟输入或修改系统设置。')
+      Text(this.isTokenRequest
+        ? '⚠️ 极速总线令牌允许该应用在后台通过队列槽位静默执行特权 shell 指令，无需每次弹窗确认。请确保你完全信任此应用。'
+        : '该命令将以 shell（UID 2000）权限执行，可能读写文件、模拟输入或修改系统设置。')
         .fontSize(11)
         .fontColor('#FBBF24')
         .lineHeight(16)
@@ -665,35 +671,54 @@ struct Index {
 
       // 按钮组
       Column() {
-        // 主要操作：本次允许
-        Button('允许执行（仅本次）')
-          .width('100%')
-          .fontSize(13)
-          .height(40)
-          .backgroundColor('#38BDF8')
-          .fontColor('#090D16')
-          .margin({ bottom: 8 })
-          .onClick(async () => {
-            this.hasPending = false;
-            await CrossAppHandler.approve();
-          })
+        if (this.isTokenRequest) {
+          // 令牌申请确认
+          Button('同意并签发令牌')
+            .width('100%')
+            .fontSize(13)
+            .height(40)
+            .backgroundColor('#38BDF8')
+            .fontColor('#090D16')
+            .margin({ bottom: 8 })
+            .onClick(async () => {
+              const ctx = getContext(this) as common.UIAbilityContext;
+              const caller = this.pendingCaller;
+              this.hasPending = false;
+              // 自动将该应用加入白名单，并签发令牌
+              await TrustManager.addTrusted(ctx, caller);
+              await CrossAppHandler.approve();
+            })
+        } else {
+          // 主要操作：本次允许
+          Button('允许执行（仅本次）')
+            .width('100%')
+            .fontSize(13)
+            .height(40)
+            .backgroundColor('#38BDF8')
+            .fontColor('#090D16')
+            .margin({ bottom: 8 })
+            .onClick(async () => {
+              this.hasPending = false;
+              await CrossAppHandler.approve();
+            })
 
-        // 加入白名单并允许
-        Button('信任该应用，以后免确认')
-          .width('100%')
-          .fontSize(13)
-          .height(40)
-          .backgroundColor('#1E293B')
-          .fontColor('#4ADE80')
-          .margin({ bottom: 8 })
-          .onClick(async () => {
-            const ctx = getContext(this) as common.UIAbilityContext;
-            const caller = this.pendingCaller;
-            this.hasPending = false;
-            // 先加白名单，再执行
-            await TrustManager.addTrusted(ctx, caller);
-            await CrossAppHandler.approve();
-          })
+          // 加入白名单并允许
+          Button('信任该应用，以后免确认')
+            .width('100%')
+            .fontSize(13)
+            .height(40)
+            .backgroundColor('#1E293B')
+            .fontColor('#4ADE80')
+            .margin({ bottom: 8 })
+            .onClick(async () => {
+              const ctx = getContext(this) as common.UIAbilityContext;
+              const caller = this.pendingCaller;
+              this.hasPending = false;
+              // 先加白名单，再执行
+              await TrustManager.addTrusted(ctx, caller);
+              await CrossAppHandler.approve();
+            })
+        }
 
         // 拒绝
         Button('拒绝')

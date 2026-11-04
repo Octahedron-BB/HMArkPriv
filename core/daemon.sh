@@ -28,6 +28,9 @@ RES_FILE="${BUS_DIR}/cmd.res"
 STATUS_FILE="${BUS_DIR}/status.json"
 REQ_DIR="${BUS_DIR}/req"
 RES_DIR="${BUS_DIR}/res"
+AUDIT_LOG="${BUS_DIR}/audit.log"
+TOKENS_FILE="${BUS_DIR}/tokens.txt"
+CONFIG_FILE="${BUS_DIR}/config.json"
 SLOT_COUNT=16
 CMD_TIMEOUT_TERM=20
 CMD_TIMEOUT_KILL=5
@@ -81,10 +84,37 @@ run_and_reply() {
 }
 
 # ------------------------------------------------------------------------------
-# 扫描队列目录的槽位，处理已填充的请求
+# 审计日志追加（带滚动保护）
+# ------------------------------------------------------------------------------
+log_audit() {
+    SLOT_LABEL="$1"
+    RET_CODE="$2"
+    COMMAND_TEXT="$3"
+    [ -f "${AUDIT_LOG}" ] || return 0
+
+    # 日志超过 128KB 时滚动截断（保留最新 200 行）
+    LOG_SIZE=$(wc -c < "${AUDIT_LOG}" 2>/dev/null || echo 0)
+    if [ "${LOG_SIZE}" -gt 131072 ]; then
+        tail -n 200 "${AUDIT_LOG}" > "${WORK_DIR}/audit.tmp" 2>/dev/null && cp "${WORK_DIR}/audit.tmp" "${AUDIT_LOG}" 2>/dev/null
+    fi
+
+    # 单行日志记录：时间 | 来源槽位 | 返回码 | 命令摘要
+    SUMMARY=$(printf "%s" "${COMMAND_TEXT}" | head -n 1 | cut -c 1-120)
+    printf "%s | %s | RC:%s | %s\n" "$(date '+%Y-%m-%d %H:%M:%S')" "${SLOT_LABEL}" "${RET_CODE}" "${SUMMARY}" >> "${AUDIT_LOG}" 2>/dev/null
+}
+
+# ------------------------------------------------------------------------------
+# 扫描队列目录的槽位，处理已填充的请求（极速总线模式）
 # ------------------------------------------------------------------------------
 process_slots() {
     [ -d "${REQ_DIR}" ] || return 0
+
+    # 1. 检查总线开关状态
+    if [ -f "${CONFIG_FILE}" ]; then
+        if grep -q '"queueEnabled":false' "${CONFIG_FILE}" 2>/dev/null; then
+            return 0
+        fi
+    fi
 
     i=0
     while [ "${i}" -lt "${SLOT_COUNT}" ]; do
@@ -93,14 +123,43 @@ process_slots() {
 
         # -s 判断非空。空文件说明没有请求，跳过
         if [ -s "${SLOT_REQ}" ]; then
-            # 读取命令（支持多行，用 cat 读全量而不是 head -n 1）
-            SLOT_CMD=$(cat "${SLOT_REQ}" 2>/dev/null)
+            # 读取命令（支持多行，用 cat 读全量）
+            SLOT_RAW=$(cat "${SLOT_REQ}" 2>/dev/null)
 
             # 立刻清空请求槽，允许调用方写入下一条
             printf "" > "${SLOT_REQ}" 2>/dev/null
 
-            if [ -n "${SLOT_CMD}" ]; then
-                run_and_reply "${SLOT_CMD}" "${SLOT_RES}" ""
+            if [ -n "${SLOT_RAW}" ]; then
+                # 2. 鉴权解析：检查首行是否带有 TOKEN:<token>
+                REQ_TOKEN=""
+                REQ_CMD=""
+                FIRST_LINE=$(printf "%s" "${SLOT_RAW}" | head -n 1)
+
+                if printf "%s" "${FIRST_LINE}" | grep -q '^TOKEN:'; then
+                    REQ_TOKEN="${FIRST_LINE#TOKEN:}"
+                    REQ_CMD=$(printf "%s" "${SLOT_RAW}" | sed '1d')
+                else
+                    REQ_CMD="${SLOT_RAW}"
+                fi
+
+                # 3. 令牌有效性校验
+                # 若 tokens.txt 存在且非空，调用必须提供 tokens.txt 中记录的合法令牌
+                AUTH_OK=1
+                if [ -f "${TOKENS_FILE}" ] && [ -s "${TOKENS_FILE}" ]; then
+                    if [ -z "${REQ_TOKEN}" ] || ! grep -q "^${REQ_TOKEN}$" "${TOKENS_FILE}" 2>/dev/null; then
+                        AUTH_OK=0
+                    fi
+                fi
+
+                if [ "${AUTH_OK}" -eq 0 ]; then
+                    TS=$(date '+%Y-%m-%d %H:%M:%S')
+                    printf "RC:403\nTIME:%s\nERROR:Unauthorized: valid token required in first line (TOKEN:<key>)\n" "${TS}" > "${SLOT_RES}" 2>/dev/null
+                    log_audit "slot${i}" "403" "BLOCKED [unauthorized] (cmd: ${REQ_CMD})"
+                else
+                    # 4. 执行命令并记录审计日志
+                    run_and_reply "${REQ_CMD}" "${SLOT_RES}" ""
+                    log_audit "slot${i}" "${RC}" "${REQ_CMD}"
+                fi
             fi
         fi
 

@@ -4,6 +4,7 @@
 
 /** 文件总线默认目录（daemon.sh 监听的路径） */
 export const DEFAULT_BUS_DIR = '/storage/media/100/local/files/Docs/Download/HMArkPriv';
+export const APP_BUS_DIR = '/storage/Users/currentUser/Download/HMArkPriv';
 
 /** 卓易通容器映射路径（备选） */
 export const ALT_BUS_DIRS: string[] = [
@@ -17,6 +18,9 @@ export const ALT_BUS_DIRS: string[] = [
 export const BUS_FILE_REQ = 'cmd.req';
 export const BUS_FILE_RES = 'cmd.res';
 export const BUS_FILE_STATUS = 'status.json';
+export const BUS_FILE_AUDIT = 'audit.log';
+export const BUS_FILE_TOKENS = 'tokens.txt';
+export const BUS_FILE_CONFIG = 'config.json';
 
 /** 轮询间隔（毫秒） */
 export const POLL_INTERVAL_MS = 50;

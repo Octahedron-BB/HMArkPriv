@@ -20,16 +20,15 @@
  * 两种调用方式对比
  * ============================================================================
  *
- * 方式 A：Want + startAbilityForResult（会弹出确认卡片）
- *   优点：最标准，不需要文件权限，能同步拿到结果
- *   缺点：用户需要点一次「允许」（首次调用必然要点；
- *         用户勾了"信任该应用"后加入白名单，之后免确认）
- *   适合：低频调用、需要用户知情同意的操作
+ * 模式一：弹窗授权模式（Want + startAbilityForResult）
+ *   优点：最标准，不需要文件权限，能同步拿到结果，操作透明
+ *   缺点：首次调用弹出授权卡片（用户勾选"信任该应用"加入白名单后，后续免确认）
+ *   适合：常规应用、低频调用、敏感系统设置变更
  *
- * 方式 C+：共享文件队列（完全后台，不拉起界面）
- *   优点：完全无感，不依赖 HMArkPriv App 存活（daemon 独立运行），支持并发
- *   缺点：需要文件权限；需要 50ms 级别的轮询
- *   适合：高频调用、后台任务、需要隐私的场景
+ * 模式二：极速总线模式（共享文件队列 + 令牌鉴权）
+ *   优点：完全无感，毫秒级响应，不依赖 HMArkPriv App 存活（daemon 独立运行），支持并发
+ *   安全性：通过用户在模式一中授权下发的 Token 鉴权，未经授权无法静默执行
+ *   适合：高频调用、自动化工具（Tasker/MacroDroid）、后台服务
  *
  * ============================================================================
  */
@@ -41,8 +40,10 @@ import { BusinessError } from '@kit.BasicServicesKit';
 /** HMArkPriv 的包名 */
 const HMPRIV_BUNDLE = 'com.octahedron.hmpriv';
 const HMPRIV_ABILITY = 'EntryAbility';
-/** 自定义 action，用于区分普通启动 */
+/** 自定义 action：执行命令 */
 const ACTION_EXECUTE = 'hmpriv.execute';
+/** 自定义 action：申请极速总线令牌 */
+const ACTION_REQUEST_TOKEN = 'hmpriv.request_token';
 
 /**
  * 总线目录（方案 C+ 用）。
@@ -75,17 +76,51 @@ function fail(msg: string, dur: number = 0): HmprivResult {
 }
 
 export class HmprivClient {
+  /** 极速总线模式当前持有的授权令牌 */
+  private static authToken: string = '';
+
+  /** 设置极速总线模式的授权令牌 */
+  static setAuthToken(token: string): void {
+    HmprivClient.authToken = token;
+  }
+
+  /** 获取当前持有的令牌 */
+  static getAuthToken(): string {
+    return HmprivClient.authToken;
+  }
+
+  /**
+   * 向 HMArkPriv 申请后台「极速总线模式」授权令牌。
+   * 会通过弹窗授权模式唤起一次确认卡片，用户点允许后返回专属令牌。
+   */
+  static async requestFastBusToken(context: common.UIAbilityContext): Promise<string> {
+    const want: Want = {
+      bundleName: HMPRIV_BUNDLE,
+      abilityName: HMPRIV_ABILITY,
+      action: ACTION_REQUEST_TOKEN,
+    };
+    const result = await context.startAbilityForResult(want);
+    if (result.resultCode === 0) {
+      const token = (result.want?.parameters?.['token'] as string) ?? '';
+      if (token) {
+        HmprivClient.setAuthToken(token);
+        return token;
+      }
+    }
+    const err = (result.want?.parameters?.['error'] as string) ?? `resultCode=${result.resultCode}`;
+    throw new Error(`requestFastBusToken failed: ${err}`);
+  }
+
   // ==========================================================================
-  // 方式 A：Want + startAbilityForResult（会拉起界面）
+  // 模式一：弹窗授权模式（Want + startAbilityForResult）
   // ==========================================================================
 
   /**
-   * 执行一条特权命令（方式 A）。
+   * 执行一条特权命令（模式一：弹窗授权模式）。
    *
    * 注意：
-   *   - 会拉起 HMArkPriv 的界面（用户会看到一次闪烁）
-   *   - HMArkPriv 执行完会 terminateSelfWithResult 回传并退出
-   *   - 如果 HMArkPriv 有未保存状态，会被打断（本项目无状态，可放心）
+   *   - 外部调用时会唤起确认卡片，用户点允许后执行并回传
+   *   - 用户勾选"信任该应用"加入白名单后，后续调用不再弹窗
    *
    * @param context 调用方的 UIAbilityContext
    * @param cmd     要执行的 shell 命令
@@ -132,27 +167,33 @@ export class HmprivClient {
   }
 
   // ==========================================================================
-  // 方式 C+：共享文件队列（完全后台）
+  // 模式二：极速总线模式（共享文件队列 + 令牌鉴权）
   // ==========================================================================
 
   /** 记录每个槽位的占用情况（同一 App 内避免自己跟自己抢槽） */
   private static slotBusy: boolean[] = new Array<boolean>(SLOT_COUNT).fill(false);
 
   /**
-   * 执行一条特权命令（方式 C+，无界面）。
+   * 执行一条特权命令（模式二：极速总线模式，无感异步）。
    *
    * 工作流程：
    *   1. 找一个空闲槽位 N
    *   2. 清空 res/slotN.res（避免读到上次的结果）
-   *   3. 把命令写入 req/slotN.req
+   *   3. 组织请求包（若有 token 则首行附加 TOKEN:<key>）并写入 req/slotN.req
    *   4. 轮询 res/slotN.res，直到出现 "RC:" 开头的内容
    *   5. 解析并返回
    *
    * @param cmd       要执行的命令
    * @param timeoutMs 超时（默认 25 秒，覆盖 daemon 的 20s+5s 两级超时）
+   * @param token     可选的授权令牌（缺省使用 setAuthToken 设置的值）
    */
-  static async execByQueue(cmd: string, timeoutMs: number = 25000): Promise<HmprivResult> {
+  static async execByQueue(
+    cmd: string,
+    timeoutMs: number = 25000,
+    token?: string,
+  ): Promise<HmprivResult> {
     const start = Date.now();
+    const effectiveToken = token ?? HmprivClient.authToken;
 
     // 1. 找空闲槽位
     const slot = HmprivClient.acquireSlot();
@@ -177,11 +218,17 @@ export class HmprivClient {
         );
       }
 
-      // 3. 写请求
+      // 3. 写请求（带令牌校验头）
       try {
         const f = fileIo.openSync(reqPath, 0o2 | 0o1000);
-        fileIo.writeSync(f.fd, `${cmd}\n`);
-        fileIo.fsyncSync(f.fd);   // 必须 fsync，否则 daemon 可能读到空内容
+        let payload = '';
+        if (effectiveToken) {
+          payload = `TOKEN:${effectiveToken}\n${cmd}\n`;
+        } else {
+          payload = `${cmd}\n`;
+        }
+        fileIo.writeSync(f.fd, payload);
+        fileIo.fsyncSync(f.fd); // 必须 fsync，否则 daemon 可能读到空内容
         fileIo.closeSync(f);
       } catch (err) {
         const e = err as BusinessError;

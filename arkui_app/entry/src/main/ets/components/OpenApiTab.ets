@@ -13,7 +13,7 @@ import { common } from '@kit.AbilityKit';
 import { promptAction } from '@kit.ArkUI';
 import { fileIo } from '@kit.CoreFileKit';
 import { BusClient } from '../services/BusClient';
-import { TrustManager, CallerRecord } from '../services/TrustManager';
+import { TrustManager, CallerRecord, TokenRecord } from '../services/TrustManager';
 import { CommandResult } from '../model/CommandResult';
 
 @Component
@@ -23,10 +23,14 @@ export struct OpenApiTab {
   @State daemonOnline: boolean = false;
   @State daemonPid: number = 0;
   @State queueReady: boolean = false;
+  @State queueEnabled: boolean = true;
   @State trusted: string[] = [];
   @State blocked: string[] = [];
   @State callLog: CallerRecord[] = [];
+  @State tokens: TokenRecord[] = [];
+  @State auditLogs: string[] = [];
   @State inputBundle: string = '';
+  @State inputTokenBundle: string = '';
   @State loading: boolean = true;
 
   aboutToAppear(): void {
@@ -36,6 +40,7 @@ export struct OpenApiTab {
   async refreshAll(): Promise<void> {
     this.loading = true;
     const ctx = getContext(this) as common.UIAbilityContext;
+    const busDir = this.busClient.getBusDir();
 
     // 1. daemon 状态
     const status = await this.busClient.checkDaemonStatus();
@@ -44,13 +49,16 @@ export struct OpenApiTab {
       this.daemonPid = status.pid;
     }
 
-    // 2. 队列是否就绪（检查 req/ 目录下是否有槽位文件）
+    // 2. 队列是否就绪与是否开启
     this.queueReady = await this.checkQueue();
+    this.queueEnabled = TrustManager.isQueueEnabled(busDir);
 
-    // 3. 白/黑名单、调用记录
+    // 3. 白/黑名单、调用记录、令牌、审计日志
     this.trusted = await TrustManager.getTrusted(ctx);
     this.blocked = await TrustManager.getBlocked(ctx);
     this.callLog = await TrustManager.getCallLog(ctx);
+    this.tokens = await TrustManager.getTokens(ctx);
+    this.auditLogs = TrustManager.getAuditLog(busDir);
 
     this.loading = false;
   }
@@ -121,6 +129,42 @@ export struct OpenApiTab {
     this.toast('调用记录已清空');
   }
 
+  async toggleQueue(enabled: boolean): Promise<void> {
+    const busDir = this.busClient.getBusDir();
+    TrustManager.setQueueEnabled(enabled, busDir);
+    this.queueEnabled = enabled;
+    this.toast(enabled ? '极速总线模式已开启' : '极速总线模式已关闭');
+  }
+
+  async addToken(): Promise<void> {
+    const name = this.inputTokenBundle.trim();
+    if (!name || name.indexOf('.') < 0) {
+      this.toast('请输入合法的包名（形如 com.example.app）');
+      return;
+    }
+    const ctx = getContext(this) as common.UIAbilityContext;
+    const busDir = this.busClient.getBusDir();
+    await TrustManager.generateToken(ctx, name, busDir);
+    this.inputTokenBundle = '';
+    this.tokens = await TrustManager.getTokens(ctx);
+    this.toast(`已为 ${name} 签发极速总线令牌`);
+  }
+
+  async revokeToken(name: string): Promise<void> {
+    const ctx = getContext(this) as common.UIAbilityContext;
+    const busDir = this.busClient.getBusDir();
+    await TrustManager.revokeToken(ctx, name, busDir);
+    this.tokens = await TrustManager.getTokens(ctx);
+    this.toast(`已吊销 ${name} 的令牌`);
+  }
+
+  async clearAudit(): Promise<void> {
+    const busDir = this.busClient.getBusDir();
+    TrustManager.clearAuditLog(busDir);
+    this.auditLogs = [];
+    this.toast('总线审计日志已清空');
+  }
+
   toast(msg: string): void {
     try {
       promptAction.showToast({ message: msg, duration: 1800 });
@@ -154,7 +198,27 @@ export struct OpenApiTab {
           this.StatusRow('调用队列', this.queueReady,
             this.queueReady ? '就绪（16 个槽位）' : '未创建，需运行 setup-queue.sh')
           Divider().color('#1E293B').margin({ top: 8, bottom: 8 })
-          this.StatusRow('协议', true, '方案 A（Want）+ 方案 C+（队列）')
+          Row() {
+            Circle({ width: 8, height: 8 })
+              .fill(this.queueEnabled ? '#4ADE80' : '#F87171')
+              .margin({ right: 10 })
+            Text('极速总线')
+              .fontSize(12)
+              .fontColor('#E2E8F0')
+              .width(80)
+            Text(this.queueEnabled ? '已开启（需验证令牌）' : '已关闭（禁止后台静默）')
+              .fontSize(11)
+              .fontColor(this.queueEnabled ? '#94A3B8' : '#F87171')
+              .layoutWeight(1)
+            Toggle({ type: ToggleType.Switch, isOn: this.queueEnabled })
+              .selectedColor('#38BDF8')
+              .onChange((isOn: boolean) => {
+                this.toggleQueue(isOn);
+              })
+          }
+          .width('100%')
+          Divider().color('#1E293B').margin({ top: 8, bottom: 8 })
+          this.StatusRow('支持协议', true, '弹窗授权模式（Want）+ 极速总线模式（Queue）')
         }
         .width('100%')
         .padding(12)
@@ -384,15 +448,145 @@ export struct OpenApiTab {
           .margin({ bottom: 12 })
         }
 
+        // ============ 极速总线模式：授权令牌管理 ============
+        this.SectionTitle(`极速总线授权令牌（${this.tokens.length}）`)
+
+        // 签发输入框
+        Row() {
+          TextInput({ text: this.inputTokenBundle, placeholder: '输入包名签发令牌，如 com.example.app' })
+            .layoutWeight(1)
+            .fontSize(12)
+            .backgroundColor('#0F172A')
+            .fontColor('#38BDF8')
+            .placeholderColor('#475569')
+            .placeholderFont({ size: 12 })
+            .borderRadius(6)
+            .onChange((v: string) => {
+              this.inputTokenBundle = v;
+            })
+          Button('签发令牌')
+            .fontSize(12)
+            .height(32)
+            .margin({ left: 6 })
+            .backgroundColor('#38BDF8')
+            .fontColor('#090D16')
+            .onClick(() => this.addToken())
+        }
+        .width('100%')
+        .margin({ bottom: 8 })
+
+        if (this.tokens.length === 0) {
+          Row() {
+            Text('暂无令牌。只有拥有有效令牌的 App 才能通过极速总线静默执行。')
+              .fontSize(11)
+              .fontColor('#64748B')
+          }
+          .width('100%')
+          .padding(12)
+          .backgroundColor('#1A2332')
+          .borderRadius(8)
+          .margin({ bottom: 12 })
+        } else {
+          Column() {
+            ForEach(this.tokens, (tok: TokenRecord, idx: number) => {
+              Row() {
+                Column() {
+                  Text(tok.bundleName)
+                    .fontSize(12)
+                    .fontColor('#C3E88D')
+                    .fontFamily('JetBrains Mono, Consolas, monospace')
+                  Text(`Token: ${tok.token.substring(0, 8)}...${tok.token.substring(tok.token.length - 4)}`)
+                    .fontSize(10)
+                    .fontColor('#64748B')
+                    .fontFamily('JetBrains Mono, Consolas, monospace')
+                    .margin({ top: 2 })
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+
+                Text('吊销')
+                  .fontSize(11)
+                  .fontColor('#F87171')
+                  .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                  .onClick(() => this.revokeToken(tok.bundleName))
+              }
+              .width('100%')
+              .padding({ top: 8, bottom: 8 })
+              if (idx < this.tokens.length - 1) {
+                Divider().color('#0D1527')
+              }
+            }, (tok: TokenRecord) => tok.bundleName)
+          }
+          .width('100%')
+          .padding({ left: 12, right: 12 })
+          .backgroundColor('#1A2332')
+          .borderRadius(12)
+          .margin({ bottom: 12 })
+        }
+
+        // ============ 极速总线审计日志 ============
+        Row() {
+          Text(`总线审计日志（最新 ${this.auditLogs.length} 条）`)
+            .fontSize(13)
+            .fontColor('#94A3B8')
+            .fontWeight(FontWeight.Bold)
+            .layoutWeight(1)
+          if (this.auditLogs.length > 0) {
+            Text('清空')
+              .fontSize(11)
+              .fontColor('#F87171')
+              .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+              .onClick(() => this.clearAudit())
+          }
+        }
+        .width('100%')
+        .margin({ bottom: 8 })
+
+        if (this.auditLogs.length === 0) {
+          Row() {
+            Text('暂无总线执行日志。')
+              .fontSize(11)
+              .fontColor('#64748B')
+          }
+          .width('100%')
+          .padding(12)
+          .backgroundColor('#1A2332')
+          .borderRadius(8)
+          .margin({ bottom: 12 })
+        } else {
+          Column() {
+            ForEach(this.auditLogs.slice(0, 15), (line: string, idx: number) => {
+              Row() {
+                Text(line)
+                  .fontSize(10)
+                  .fontColor('#CBD5E1')
+                  .fontFamily('JetBrains Mono, Consolas, monospace')
+                  .width('100%')
+              }
+              .width('100%')
+              .padding({ top: 6, bottom: 6 })
+              if (idx < Math.min(this.auditLogs.length, 15) - 1) {
+                Divider().color('#0D1527')
+              }
+            }, (line: string, idx: number) => `${idx}_${line}`)
+          }
+          .width('100%')
+          .padding({ left: 12, right: 12 })
+          .backgroundColor('#1A2332')
+          .borderRadius(12)
+          .margin({ bottom: 12 })
+        }
+
         // ============ 协议说明 ============
         this.SectionTitle('给其他 App 的接入方式')
         Column() {
-          Text('方式 A（会弹出确认，用户可拒绝）\n' +
+          Text('模式一：弹窗授权模式（推荐常规应用，透明弹窗确认）\n' +
                '  action: hmpriv.execute\n' +
                '  parameters: { cmd: "id" }\n\n' +
-               '方式 C+（后台队列，白名单内免确认）\n' +
-               '  写 req/slotN.req，读 res/slotN.res\n' +
-               '  结果格式：RC:<code> / TIME:<ts> / <output>\n\n' +
+               '模式二：极速总线模式（高频后台，需携带令牌）\n' +
+               '  先通过 action: hmpriv.request_token 获取令牌\n' +
+               '  写 req/slotN.req（首行 TOKEN:<key>，第二行起命令）\n' +
+               '  读 res/slotN.res 获取执行结果\n\n' +
                '完整协议见项目 docs/跨应用调用协议.md')
             .fontSize(11)
             .fontColor('#64748B')

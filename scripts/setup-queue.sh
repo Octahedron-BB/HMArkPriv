@@ -61,13 +61,19 @@ mkdir -p "$TMPD"
 cd "$TMPD"
 
 # 3. 逐槽创建（hdc file send 到已存在目录下的新文件名，hdc 有权创建）
-echo "[*] 预创建槽位文件..."
+echo "[*] 预创建槽位文件与安全配置文件..."
 i=0
 while [ "$i" -lt "$SLOTS" ]; do
   h file send empty.bin "$BUS/req/slot$i.req" >/dev/null 2>&1 || true
   h file send empty.bin "$BUS/res/slot$i.res" >/dev/null 2>&1 || true
   i=$((i + 1))
 done
+
+# 创建安全管控与审计文件
+h file send empty.bin "$BUS/audit.log" >/dev/null 2>&1 || true
+h file send empty.bin "$BUS/tokens.txt" >/dev/null 2>&1 || true
+echo '{"queueEnabled":true}' > "$TMPD/config.json"
+h file send "$TMPD/config.json" "$BUS/config.json" >/dev/null 2>&1 || true
 
 # 4. 验证
 echo ""
