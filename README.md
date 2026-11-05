@@ -22,7 +22,7 @@
 ## ✨ 核心特性
 
 - **原生 ArkUI 体验**：基于 ArkTS / ArkUI 构建，提供多 Tab 界面，内置全功能终端控制台、命令手册抽屉、应用管理与开放平台控制中心。
-- **免 Root 特权桥梁**：运行于 UID 2000 (`shell`) 权限，可执行应用启动/冻结、屏幕/电源控制、触控模拟 (`uinput`/`uitest`) 等 290+ 项系统级指令。
+- **免 Root 特权桥梁**：运行于 UID 2000 (`shell`) 权限，可执行应用启动/强制停止/清理、屏幕/电源控制、触控模拟 (`uinput`/`uitest`) 等 290+ 项系统级指令。
 - **开放跨应用生态**：
   - **「弹窗授权模式」 (Want IPC)**：严格遵循鸿蒙系统标准 IPC，用户交互式弹窗审批授权，直观安全。
   - **「极速总线模式」 (Queue IPC)**：基于多槽位并发总线，毫秒级响应，内置 **Token 密钥鉴权**、**主开关熔断** 与 **完整安全审计日志**。
@@ -93,30 +93,12 @@ cd arkui_app
 
 ---
 
-## 📦 应用分发方案指南
-
-很多开发者关心：**“为什么 DevEco 自动生成的签名别人无法直接安装？如何分发给其他用户？”**
-
-### 为什么无法直接将当前的 Signed HAP 发给别人？
-DevEco Studio 的“自动签名”（Auto-generated Debug Signature）会在华为开发者中心自动为当前电脑和当前设备生成一个**调试证书（Debug Profile）**。该 Profile 的核心特征是**强绑定当前设备的 UDID**（例如测试机的 `33Z0224430072393`）。若其他用户尝试安装此 HAP，系统包管理器会报 `9568289: The profile does not match the device's UDID`。
-
-由于 HMArkPriv 本身就需要通过电脑 `hdc` 部署一次后台 `daemon.sh`，分发通常有以下最佳实践：
-
-| 分发方式 | 适合场景 | 操作流程 | 优缺点 |
-|---------|----------|----------|--------|
-| **1. 源码 + DevEco Studio 导入（开源主流）** | 极客玩家、开源社区贡献者 | 用户 clone 仓库后，在自己的 DevEco Studio 打开，插上手机勾选自己的“自动签名”，一键点击 Run | **最推荐**。完全免费，无需收集 UDID，自动适配任意设备 |
-| **2. AGC 内部测试分发 (Internal Testing)** | 朋友内测、小范围种子用户（≤100人） | 开发者在 AGC 控制台添加测试用户的华为账号或 UDID，生成包含该批设备的 Release/Debug Profile 打包 HAP 分发 | 官方机制，用户可以通过 AGC 测试邀请直接安装，但有名额限制（最多100台测试设备） |
-| **3. 一键 HDC 部署脚本包 (One-Click Installer)** | 电脑辅助一键安装 | 将 daemon 部署与自编译 HAP 整合进脚本：`deploy.sh`。若采用此方式，若用户有证书则脚本自动签，若无则指导用户一键签名 | 流程标准化，一条命令同时搞定 `daemon.sh` 注入与 HAP 安装 |
-| **4. 华为企业级证书 (Enterprise Certificate)** | 商业化团队、无限制免审安装 | 企业开发者账号申请企业私有证书，Wildcard 签名 HAP | 不限制 UDID，任意设备均可安装，但需要企业资质年审 |
-
----
-
 ## 🔌 跨应用特权调用 (OpenAPI)
 
 HMArkPriv 提供了一套类似 Shizuku 的跨应用调用方案，允许第三方 App 轻松获得特权 shell 权限：
 
 - **「弹窗授权模式」 (Want IPC)**：通过 `startAbilityForResult` 向 HMArkPriv 发送执行请求，HMArkPriv 弹出系统确认卡片，经用户许可后返回执行结果。
-- **「极速总线模式」 (Queue IPC)**：通过共享目录多槽位请求通道 (`slot1.req` ~ `slot4.req`) 通信。第三方应用先向 HMArkPriv 申请独立 Token，随后即可在后台以毫秒级时延执行特权命令，支持主开关熔断与审计追踪。
+- **「极速总线模式」 (Queue IPC)**：通过共享目录多槽位请求通道（`slot0.req` ~ `slot15.req`）通信。第三方应用先向 HMArkPriv 申请独立 Token，随后即可在后台以毫秒级时延执行特权命令。令牌只以 sha256 哈希形式存放于 App 沙箱，配合主开关熔断与审计追踪。
 
 第三方项目只需将 [`arkui_app/sdk/HmprivClient.ets`](arkui_app/sdk/HmprivClient.ets) 拷入工程即可使用。详细接口规范请参阅 [跨应用调用协议](docs/跨应用调用协议.md)。
 
@@ -164,6 +146,7 @@ HMArkPriv/
 ## 📖 文档导航
 
 所有技术文档均收录在 [`docs/`](docs/) 目录下，各司其职：
+- **查看开发进度与已知限制** ➡️ [TODO.md](docs/TODO.md)
 - **查阅全部系统可用指令** ➡️ [HarmonyOS-Shell-指令全集.md](docs/HarmonyOS-Shell-指令全集.md)
 - **为你的 App 接入特权能力** ➡️ [跨应用调用协议.md](docs/跨应用调用协议.md)
 - **了解鸿蒙权限边界与总线架构** ➡️ [ARCHITECTURE.md](docs/ARCHITECTURE.md)

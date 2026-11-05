@@ -11,7 +11,7 @@
 |------|------|------|
 | Phase 1 | MVP：文件总线 + daemon + 终端 | ✅ 完成（模拟器 + 真机双验证） |
 | Phase 2 | 首页快捷面板 | 🟢 完成约 85%（缺截图/电源模式/容器入口） |
-| Phase 3 | 应用管理与深度管控 | 🟢 MVP 就绪（列表/启动/强停/权限透视/清数据/卸载） |
+| Phase 3 | 应用管理与深度管控 | 🟢 MVP 就绪（列表/启动/强停/权限透视/清数据/卸载）；冻结受限（见 4.1） |
 | Phase 4 | 触控模拟 | ⬜ 未开始 |
 | Phase 5 | 系统信息 | 🟡 Tab 框架已建（电源与屏幕 + 设备信息入口），卡片化未做 |
 | Phase 6 | 打磨与引导 | ✅ 终端连接日志优化、HTML模式退役、文档重构整理 |
@@ -182,21 +182,66 @@
 - [x] **全息元数据导出**：
       - 原始代码容器查看 `bm dump -n` 完整数据。
 
-### 4. 极客“真·冻结”与冷宫防唤醒系统（Freeze & Anti-Wakeup · 规划中）
-- [ ] **防唤醒核心机制（让其他程序找不到、唤不醒）**：
-      - **主方案（EDM 超级管理员模式 · 系统级封印）**：
-        1. App 内接入并声明 `EnterpriseAdminExtensionAbility`。
-        2. 提权 Daemon 执行 `edm enable-admin -n com.octahedron.hmpriv -a EnterpriseAdminAbility -t super` 激活系统级 Super Admin（Device Owner）。
-        3. 调用官方 `@ohos.enterprise.applicationManager.addPackagesToDisallowList` 将目标应用加入禁用名单。
-        4. **实测效果**：系统内核与 AbilityManager 底层全局拒绝任何 Want / URL Scheme / 隐式调用，图标隐藏或置灰，其他程序无法探测、无法拉起、无法唤醒，如同彻底从系统中消失！
-      - **副方案（Daemon 动态守卫反弹拦截）**：
-        1. 针对未开启 EDM 的设备，后台 Daemon 监听 Ability 启动事件或定时扫描。
-        2. 一旦冷宫名单中的应用被外部应用或系统服务拉起，100ms 内瞬间触发 `aa force-stop <bundleName>` 掐灭进程，切断对外响应。
-- [ ] **冷宫管理界面**：
-      - 一键添加/移出冷宫。
-      - 冻结状态与解冻状态无缝切换。
+### 4. 冻结 / 冷宫（Freeze · 受限，见下方实测结论）
 
-### 6. 电池与电源策略深度联动（Battery & Power）
+> **[2026-11-05 实测]** 先说结论：**鸿蒙 7.0 消费者版没有可用的「停用应用」能力**，
+> 做不到「和没装一样」。四条路径全部封死，详见 §4.1。这一节从「规划中」降级为「受限」。
+
+- [x] **强停（已有）**：`aa force-stop <bundleName>`，实测杀后 60 秒内不会被系统自动拉起
+- [ ] **看门狗式冻结（唯一可行的折中方案）**：
+      - daemon 维护冻结名单，每约 3 秒扫描 `ps -ef`，命中目标即 `aa force-stop`
+      - 能达成：**不能后台常驻**、唤醒后最多活 3 秒
+      - 做不到：包仍在（`bm dump` 查得到）、能被 `aa start` 拉起（只是活不久）
+      - 代价：daemon 需常驻轮询，轻微耗电
+- [ ] 冻结名单管理界面（添加 / 移出 / 显示当前被拦截次数）
+
+#### 4.1 为什么真正的「停用」不可行（实测证据）
+
+| 路径 | 实测结果 |
+|------|---------|
+| `bm disable -n <包名>` | `'disable' is not a valid bm command` |
+| `bm enable` | 同上 |
+| `strings /system/bin/bm` | **有** `RunAsDisableCommand`、`'bm disable -n'` 等字符串 —— 实现编译进去了，但命令分发表未注册（华为主动关闭入口） |
+| 系统设置应用详情页 | 只有「卸载」「强行停止」和各项权限开关，**没有停用按钮** |
+| `/sys/fs/cgroup/freezer/` | `Permission denied` |
+| `hidumper -s BundleMgr` | 零字段输出 |
+| `hidumper -s ApplicationManagerService` | 零字段输出 |
+| `param set` | `errNum 1001`（无权限） |
+
+补充观察：
+- `bm dump -n` 的 `userInfo.bundleUserInfo` 里确实有 `"enabled": true` 字段 ——
+  说明**底层数据模型支持停用**，只是没有对外入口
+- 设置应用自身持有 `ohos.permission.CHANGE_ABILITY_ENABLED_STATE`（这就是它能停用的前提），
+  但 shell（UID 2000）没有该权限，也没有对应命令
+
+#### 4.2 EDM（企业设备管理）路线 —— 未验证，大概率不可行
+
+原计划让 App 声明 `EnterpriseAdminExtensionAbility`、通过
+`edm enable-admin` 激活设备管理员，再调用
+`@ohos.enterprise.applicationManager` 的禁用名单 API。
+
+**实测**：`edm enable-admin -n com.octahedron.hmpriv` 静默返回，
+但 `bm dump -n com.octahedron.hmpriv | grep -ic enterprise` = **0**，
+说明**并未真正激活**。原因推测：App 未声明 `EnterpriseAdminExtensionAbility`，
+且消费者版设备通常需要企业 OTA 配置才能成为 Device Owner。
+
+⚠️ 这里以前写着「实测效果：……如同彻底从系统中消失」，那是**未经证实的描述，已删除**。
+若要继续这条路，必须先完成：声明 ExtensionAbility → 验证能否成为 Device Owner
+→ 验证 `addDisallowedList` 在消费者版是否放行。三步都通过才算可行。
+
+#### 4.3 对照用户期望
+
+| 期望 | 看门狗冻结 | 卸载 |
+|------|-----------|------|
+| 不能被唤醒 | 🟡 唤醒后 3 秒内被杀 | ✅ |
+| 不能被其他程序检测到 | ❌ 包仍在 | ✅ |
+| 不能被拉起 | ❌ 能拉起（活不久） | ✅ |
+| 不能后台运行 | ✅ | ✅ |
+| 可恢复 | ✅ 随时解冻 | ❌ 无法恢复（HAP 备份不出来） |
+
+结论：要「像没装一样」只能卸载；要「可逆地废掉它」只能用看门狗冻结。
+
+### 5. 电池与电源策略深度联动（Battery & Power）
 - [ ] **硬件级电池状态透视**：
       - 结合系统底层原生接口与 `hidumper`，读取电池真实循环次数、真实健康度、实时充放电毫安电流、电池温度与电压。
 - [ ] **电源模式瞬切卡片**：
