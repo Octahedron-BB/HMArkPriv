@@ -44,42 +44,91 @@ mkdir -p "${WORK_DIR}" 2>/dev/null
 mkdir -p "${BUS_DIR}" 2>/dev/null
 
 # ------------------------------------------------------------------------------
-# 屏幕状态记录
+# 屏幕状态：常亮控制 + 真实状态探测
 #
-# 用途：记录「是否有人设过 timeout override」。
-# 背景：没有任何接口能读回 override 的值（hidumper 全零字段、param 里也没有），
-# 唯一能探测「是否存在」的 `timeout -r` 会顺带清除，不能当纯查询用。
+# 【为什么状态要由 daemon 记账】
+# 实测（uid 2000，非 tty），三个读接口全部失效：
+#   hidumper -s PowerManagerService -a -s > f   -> f 是 0 字节（正文只在 tty 输出）
+#   power-shell timeout -r            > f   -> f 是 0 字节
+#   settings 数据库                          -> Permission denied
+# 写操作却照常生效，所以只能"盲写"。唯一能落盘的旁证是 hilog：
+#   override 时会打 "I C02902/powermgr/PowerSvc: Try to override screenOffTime,
+#                      timeout=%, pid: %, uid: %"
+#   而 restore（-r）不打日志 —— 所以"当前是否有 override"仍然只能靠记账，
+#   但"是否有别人设过 override"可以靠扫 hilog 发现。
 #
-# 格式（两行，daemon 用 printf 写，App 读起来也简单）：
-#   source=app|system
-#   timeout=<毫秒>
-#
-# 注：充电常亮已改用 App 侧的 runningLock（不改 timeout），
-# 所以这里现在只用于记录 daemon 启动/退出时的兜底清理状态。
+# 【状态文件格式】App 直接读它显示，所以键名保持扁平：
+#   override=0|1        我们是否设置了屏幕超时覆盖
+#   timeout=<毫秒>      override 的值（override=0 时为 0）
+#   screen=on|off|unknown   屏幕真实亮灭（来自 hilog 的 screenOn: 行）
+#   ts=<秒级时间戳>
 # ------------------------------------------------------------------------------
 SCREEN_STATE="${BUS_DIR}/screen_state.txt"
+STAY_AWAKE_MS=86400000   # 24 小时：等同"不熄屏"，但仍是一个具体值
+# 屏幕亮灭的"最近已知值"。必须在使用前初始化 —— 启动清理阶段就会调用
+# probe_screen 并写状态文件，若此时变量为空，写进文件的就是空串。
+SCREEN_LAST_ONOFF="unknown"
 
-#   $1 = source（app / system）
-#   $2 = timeout 毫秒（system 传 0）
+#   $1 = override（0/1）  $2 = timeout 毫秒
 write_screen_state() {
-    [ -f "${SCREEN_STATE}" ] || return 0
-    printf 'source=%s\ntimeout=%s\n' "$1" "$2" > "${SCREEN_STATE}" 2>/dev/null
+    printf 'override=%s\ntimeout=%s\nscreen=%s\nts=%s\n' \
+        "$1" "$2" "${SCREEN_LAST_ONOFF:-unknown}" "$(date +%s)" \
+        > "${SCREEN_STATE}" 2>/dev/null
+}
+
+# 探测屏幕亮灭。
+#
+# 数据源：sceneboard 的 ClockData 日志，约每分钟一行
+#   ClockData: needUpdateLockTime screenOn:true|false, isdoze:...
+# 用最后一行作为"最近的已知状态"。注意最多滞后约 1 分钟，
+# 所以它只适合做界面提示，不适合当作"精确的实时状态"卖点。
+probe_screen() {
+    # 不用 local：本机 sh 是精简实现，POSIX 不保证 local 可用
+    PROBE_LINE=$(hilog -x 2>/dev/null | grep 'screenOn:' | tail -n 1)
+    case "${PROBE_LINE}" in
+        *'screenOn:true'*)  SCREEN_LAST_ONOFF="on" ;;
+        *'screenOn:false'*) SCREEN_LAST_ONOFF="off" ;;
+        *)                  SCREEN_LAST_ONOFF="unknown" ;;
+    esac
+}
+
+# 开启常亮。
+#
+# 【必须先 -f】`hidumper -s PowerManagerService -a -t`（帮助里写 keep screen on）
+# 会给 powermgr 挂一把永不释放的 PowerMgrKeepOnLock，只有 `-a -f` 能解掉。
+# 我们曾在排查时误执行过一次 -t，结果手机再也无法自动熄屏，且杀 App 无效 ——
+# 这个坑记在 docs/TODO.md 5.0.4。这里先 -f 保证从干净状态起步。
+stay_awake_on() {
+    hidumper -s PowerManagerService -a -f >/dev/null 2>&1
+    power-shell timeout -o "${STAY_AWAKE_MS}" >/dev/null 2>&1
+    write_screen_state "1" "${STAY_AWAKE_MS}"
+}
+
+# 关闭常亮：-r 恢复超时值，-f 再兜一层（清 override + 清任何 keepScreenOn 锁）
+stay_awake_off() {
+    power-shell timeout -r >/dev/null 2>&1
+    hidumper -s PowerManagerService -a -f >/dev/null 2>&1
+    write_screen_state "0" "0"
 }
 
 # 状态恢复与清理
 cleanup() {
     power-shell timeout -r >/dev/null 2>&1
-    write_screen_state "system" "0"
+    write_screen_state "0" "0"
     rm -f "${PID_FILE}" 2>/dev/null
     exit 0
 }
 trap cleanup INT TERM
 
-# 【重要】启动时先无条件恢复一次系统熄屏超时。
+# 【重要】启动时先无条件恢复一次系统熄屏超时，并解掉可能残留的 keepScreenOn 锁。
 # 上一次 daemon 若被 kill -9 杀掉，trap 不会执行，可能残留 24 小时常亮。
 # 这里做一次幂等清理，保证从干净状态开始 —— 这是"幽灵常亮"的根治手段。
+# 注意 -f 不能省：`hidumper -a -t` 挂的 PowerMgrKeepOnLock 只有 -f 能解，
+# `timeout -r` 对它无效（详见 docs/TODO.md 5.0.4）。
 power-shell timeout -r >/dev/null 2>&1
-write_screen_state "system" "0"
+hidumper -s PowerManagerService -a -f >/dev/null 2>&1
+probe_screen
+write_screen_state "0" "0"
 
 # Single instance enforcement
 if [ -f "${PID_FILE}" ]; then
@@ -98,6 +147,7 @@ printf '{"framework":"HMArkPriv","status":"ready","pid":%d,"uid":%d}\n' "$$" "$(
 
 LAST_REQ_ID=""
 FREEZE_CHECK_COUNTER=39
+SCREEN_PROBE_COUNTER=0
 
 # ------------------------------------------------------------------------------
 # 读 config.json 里的值
@@ -230,6 +280,47 @@ run_and_reply() {
     CMD_STR="$1"
     OUT_FILE="$2"
     REQ_ID="$3"
+
+    # ---- 内部命令：屏幕常亮控制 ----
+    #
+    # 这三条不是 shell 命令，而是 daemon 自己处理的状态机操作。
+    # 放在这里拦截，是为了让 App 用同一套总线协议（reqId + res）调用，
+    # 不用为它们另开一套接口。
+    #
+    # 前缀用 '__hmpriv_' 是为了不和真实 shell 命令冲突；同时审计日志里
+    # 也能一眼看出这是内部命令而非用户输入。
+    case "${CMD_STR}" in
+        __hmpriv_screen_on)
+            stay_awake_on
+            probe_screen
+            write_screen_state "1" "${STAY_AWAKE_MS}"
+            TS=$(date '+%Y-%m-%d %H:%M:%S')
+            printf "ID:%s RC:0 TIME:%s\nOK override=%s screen=%s\n" \
+                "${REQ_ID}" "${TS}" "${STAY_AWAKE_MS}" "${SCREEN_LAST_ONOFF}" > "${OUT_FILE}" 2>/dev/null
+            return
+            ;;
+        __hmpriv_screen_off)
+            stay_awake_off
+            probe_screen
+            write_screen_state "0" "0"
+            TS=$(date '+%Y-%m-%d %H:%M:%S')
+            printf "ID:%s RC:0 TIME:%s\nOK override=0 screen=%s\n" \
+                "${REQ_ID}" "${TS}" "${SCREEN_LAST_ONOFF}" > "${OUT_FILE}" 2>/dev/null
+            return
+            ;;
+        __hmpriv_screen_status)
+            probe_screen
+            TS=$(date '+%Y-%m-%d %H:%M:%S')
+            # 读回记账值（App 可能刚重启，状态以文件为准）
+            OV=$(grep -o 'override=[01]' "${SCREEN_STATE}" 2>/dev/null | head -n 1 | sed 's/override=//')
+            TO=$(grep -o 'timeout=[0-9]*' "${SCREEN_STATE}" 2>/dev/null | head -n 1 | sed 's/timeout=//')
+            [ -z "${OV}" ] && OV=0
+            [ -z "${TO}" ] && TO=0
+            printf "ID:%s RC:0 TIME:%s\nOK override=%s timeout=%s screen=%s\n" \
+                "${REQ_ID}" "${TS}" "${OV}" "${TO}" "${SCREEN_LAST_ONOFF}" > "${OUT_FILE}" 2>/dev/null
+            return
+            ;;
+    esac
 
     # 【关键 1】stdin 重定向 /dev/null：防止 sqlite3 等交互式工具读 stdin 阻塞
     # 【关键 2】timeout -k：20s 后 SIGTERM，再 5s 后 SIGKILL
@@ -437,6 +528,20 @@ ${LINE}"
     if [ "${FREEZE_CHECK_COUNTER}" -ge 40 ]; then
         FREEZE_CHECK_COUNTER=0
         check_frozen
+    fi
+
+    # ---- 屏幕亮灭探测（每约 30 秒一次）----
+    # 为什么是 30 秒：`hilog -x` 单次实测约 310ms，太频繁会明显抬高常驻功耗。
+    # 50ms * 600 = 30s。屏幕状态只用于界面提示，滞后半分钟可以接受。
+    SCREEN_PROBE_COUNTER=$((SCREEN_PROBE_COUNTER + 1))
+    if [ "${SCREEN_PROBE_COUNTER}" -ge 600 ]; then
+        SCREEN_PROBE_COUNTER=0
+        probe_screen
+        OV=$(grep -o 'override=[01]' "${SCREEN_STATE}" 2>/dev/null | head -n 1 | sed 's/override=//')
+        TO=$(grep -o 'timeout=[0-9]*' "${SCREEN_STATE}" 2>/dev/null | head -n 1 | sed 's/timeout=//')
+        [ -z "${OV}" ] && OV=0
+        [ -z "${TO}" ] && TO=0
+        write_screen_state "${OV}" "${TO}"
     fi
 
     # Low-power sleep (snappy 50ms interval)

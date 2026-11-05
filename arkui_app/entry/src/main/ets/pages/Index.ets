@@ -14,7 +14,6 @@
 import { BusClient } from '../services/BusClient';
 import { BusDirManager } from '../services/BusDirManager';
 import { BatteryReader } from '../services/BatteryReader';
-import { ScreenAwakeController } from '../services/ScreenAwakeController';
 import { TerminalConsole } from '../components/TerminalConsole';
 import { DaemonStatusCard } from '../components/DaemonStatusCard';
 import { OpenApiTab } from '../components/OpenApiTab';
@@ -26,7 +25,7 @@ import { ResponseParser } from '../utils/ResponseParser';
 import { CommandResult } from '../model/CommandResult';
 import { DEFAULT_BUS_DIR } from '../common/Constants';
 import { common } from '@kit.AbilityKit';
-import { window } from '@kit.ArkUI';
+import { fileIo } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 
 @Entry
@@ -56,6 +55,14 @@ struct Index {
   @State stayAwakeWhileCharging: boolean = false;
   /** 当前是否在充电（用于开关行的副标题提示） */
   @State isCharging: boolean = false;
+  /** daemon 记账：是否处于超时覆盖（常亮）状态 */
+  @State screenOverride: boolean = false;
+  /** daemon 记账：override 的具体毫秒值 */
+  @State screenOverrideMs: number = 0;
+  /** daemon 探测到的屏幕亮灭（on / off / unknown） */
+  @State screenRealState: string = 'unknown';
+  /** 上一次已下发的屏幕指令，用于幂等（避免每 3 秒重复发同一条命令） */
+  private awakeApplied: string = '';
   /** 充电状态上报定时器 */
   private chargeTimerId: number = -1;
   private busClient: BusClient = new BusClient(DEFAULT_BUS_DIR);
@@ -67,40 +74,30 @@ struct Index {
     });
     // 兜底：如果监听注册前就已有 pending，主动读一次
     this.syncPending();
-    // 把主窗口交给常亮控制器：setWindowKeepScreenOn 是窗口级 API。
-    // 幂等调用（真正的 keepScreenOn 由 syncAwakeLock 按开关状态决定）。
-    const ctx = getContext(this) as common.UIAbilityContext;
-    window.getLastWindow(ctx).then((w: window.Window) => {
-      ScreenAwakeController.bindWindow(w);
-    }).catch((err: Error) => {
-      hilog.error(0x9201, 'Index', `bindWindow failed: ${err.message}`);
-    });
     this.initBusDir();
   }
 
   aboutToDisappear(): void {
     this.stopChargeReporting();
-    // 页面销毁时撤销常亮，避免窗口被系统回收后还残留意图
-    ScreenAwakeController.release();
+    // 【注意】这里**不**撤销常亮。常亮是 daemon 侧的全局状态，属于"充电时不熄屏"
+    // 这个设备级设置：用户关掉 App 后插着电也应该继续常亮（与 Android 语义一致）。
+    // 撤销责任归 daemon（退出时 trap + 启动时无条件清理），不归 UI 生命周期。
   }
 
   /** 页面可见时开始上报充电状态（切后台就停） */
   onPageShow(): void {
     this.startChargeReporting();
-    // 从后台回前台要把常亮状态重新同步一次（后台期间窗口不可见，锁会被系统回收）
-    this.syncAwakeLock();
+    this.refreshScreenState();
   }
 
   /**
-   * 切后台时停止上报并释放常亮。
+   * 切后台只停止轮询。
    *
-   * setWindowKeepScreenOn 是**窗口级**的：窗口不可见时锁自然失效，所以这里
-   * 显式撤销一次，保证「回前台」时 syncAwakeLock 的判断（isHeld）与实际一致，
-   * 不会因为状态错乱导致开关打开却没生效。
+   * 之前这里会撤销常亮，是因为当时用的是窗口级 setWindowKeepScreenOn（窗口不可见
+   * 就失效）。现在改回 daemon 的 timeout 方案，全局生效，切后台应当继续常亮。
    */
   onPageHide(): void {
     this.stopChargeReporting();
-    ScreenAwakeController.release();
   }
 
   /**
@@ -133,36 +130,83 @@ struct Index {
     const snap = BatteryReader.read();
     this.isCharging = snap.charging;
     TrustManager.reportCharging(snap.charging, dir);
-    // 顺带维护「充电常亮」的锁状态
+    // 顺带维护「充电常亮」状态；并刷新 daemon 记录的真实状态。
+    // 放在这里而不是只放在 onPageShow，是因为 onPageShow 可能早于 initBusDir
+    // 完成（实测早 33ms），那时 busDir 还是空，读不到 screen_state.txt。
     this.syncAwakeLock();
+    this.refreshScreenState();
   }
 
   /**
-   * 同步「充电常亮」的窗口常亮状态。
+   * 同步「充电常亮」。
    *
-   * 【实现演进（两次都踩了坑，记下来免得再走回头路）】
-   * 1) 最早用 `power-shell timeout -o 86400000`：把屏幕超时改成 24 小时。
-   *    能用，但污染用户设置、必须负责还原，还原失败就成"幽灵常亮"。
-   * 2) 改成 `runningLock` + `RunningLockType.BACKGROUND`：以为加了临时锁，
-   *    实际是**无效实现** —— 该类型是"屏幕灭了别让系统睡"，不是"别让屏幕灭"，
-   *    而且自 API 10 起已废弃，三方应用也拿不到 SCREEN 类型。调用不报错，
-   *    所以肉眼看着像"生效"，实际 `hidumper -r` 里根本没有我们这把锁。
-   * 3) 现在用 `window.setWindowKeepScreenOn()`：系统唯一面向三方应用的常亮
-   *    接口，窗口维度持锁，窗口消失由系统回收，不碰用户设置也不留残锁。
+   * 【实现演进（三次，前两次都不对，记下来免得再走回头路）】
+   * 1) `power-shell timeout -o 86400000`：把屏幕超时覆盖成 24 小时。
+   *    方法本身没问题（用户认可），但必须负责还原，还原失败就成"幽灵常亮"。
+   * 2) `runningLock` + `RunningLockType.BACKGROUND`：**完全无效**。
+   *    该类型是"屏幕灭了别让系统睡"，不是"别让屏幕灭"，API 10 起已废弃，
+   *    三方应用也拿不到 SCREEN 类型。调用不报错，所以看着像生效。
+   * 3) `window.setWindowKeepScreenOn()`：能生效（实测 SCREEN 锁 +1），
+   *    但**仅前台窗口有效**，切后台就没了，不是用户要的"充电时不熄屏"。
    *
-   * 【限制】窗口不可见即失效（切后台不常亮）；系统检测到"非常规使用"
-   * 时有权恢复自动熄屏（如长时间无交互），这是平台策略。
+   * 【现在】回到 1) 的 timeout 方案，但把「谁来做、谁来回读」交给了 daemon：
+   *   - daemon 常驻，App 被杀了它还在，还原责任不会丢给 UI 生命周期
+   *   - 状态记账也由 daemon 做（`screen_state.txt`），App 侧不再猜
+   *   - 同时规避了一个致命坑：`hidumper -a -t` 会挂一把 POWermgr 内的永久
+   *     常亮锁，只有 `-a -f` 能解，`timeout -r` 解不掉（见 docs/TODO.md 5.0.4）
+   *
+   * App 只负责表达意图：充电 且 开关开 → 发 on，否则发 off。幂等，可重复发。
    */
   syncAwakeLock(): void {
     const shouldHold = this.stayAwakeWhileCharging && this.isCharging;
-    if (shouldHold && !ScreenAwakeController.isHeld()) {
-      ScreenAwakeController.acquire().then((ok: boolean) => {
-        hilog.info(0x9201, 'Index', `keepScreenOn acquire = ${ok}`);
-      });
-    } else if (!shouldHold && ScreenAwakeController.isHeld()) {
-      ScreenAwakeController.release().then((ok: boolean) => {
-        hilog.info(0x9201, 'Index', `keepScreenOn release = ${ok}`);
-      });
+    const cmd = shouldHold ? '__hmpriv_screen_on' : '__hmpriv_screen_off';
+    if (this.awakeApplied === cmd) {
+      return; // 已经是这个意图，不重复打扰 daemon
+    }
+    if (this.needAuth || !this.busClient.getBusDir()) {
+      return; // 还没连通总线，等 initBusDir 完成后再同步
+    }
+    this.awakeApplied = cmd;
+    this.busClient.execute(cmd).then((r: CommandResult) => {
+      hilog.info(0x9201, 'Index', `screen ${cmd} -> rc=${r.exitCode} ${r.output.trim()}`);
+      this.refreshScreenState();
+    }).catch((e: Error) => {
+      // 失败了要允许下次重试，否则会一直卡在"以为已应用"
+      this.awakeApplied = '';
+      hilog.error(0x9201, 'Index', `screen ${cmd} failed: ${e.message}`);
+    });
+  }
+
+  /**
+   * 读取 daemon 写的真实屏幕状态，显示在开关下方。
+   *
+   * 为什么不像以前那样自己读 settings：settings 里只有用户设的基准值，
+   * override 不落到数据库（是 powermgr 的内存态），所以以前那栏"当前熄屏时间"
+   * 永远是系统设置值，没有意义。现在由 daemon 记账 + 探测真实亮灭。
+   */
+  refreshScreenState(): void {
+    const dir = this.busClient.getBusDir();
+    if (!dir) {
+      return;
+    }
+    try {
+      const path = `${dir}/screen_state.txt`;
+      if (!fileIo.accessSync(path)) {
+        return;
+      }
+      const txt = fileIo.readTextSync(path);
+      const get = (key: string): string => {
+        const m = txt.match(new RegExp(`${key}=([^\\n]*)`));
+        return m ? m[1].trim() : '';
+      };
+      const ov = get('override');
+      const to = get('timeout');
+      const sc = get('screen');
+      this.screenOverride = ov === '1';
+      this.screenOverrideMs = to ? Number.parseInt(to, 10) : 0;
+      this.screenRealState = sc;
+    } catch (e) {
+      hilog.warn(0x9201, 'Index', `refreshScreenState: ${(e as Error).message}`);
     }
   }
 
@@ -231,6 +275,11 @@ struct Index {
       this.connecting = false;
       this.stayAwakeWhileCharging = TrustManager.isStayAwakeWhileCharging(dir);
       this.refreshDaemonStatus();
+      // 总线通了才读得到 screen_state.txt，且要顺带把「开关意图」推给 daemon：
+      // 用户上次开着开关、但期间 daemon 重启过（启动时无条件清理），
+      // 这时 daemon 侧是"无覆盖"，必须由 App 主动重新下发一次。
+      this.refreshScreenState();
+      this.syncAwakeLock();
       // 清理旧版明文令牌残留（幂等，没有残留时不做任何事）
       TrustManager.purgeLegacyTokens(ctx, dir);
       if (!ok) {
@@ -372,28 +421,30 @@ struct Index {
   /**
    * 切换「充电时不熄屏」。
    *
-   * 开关本身只负责记账（写 preferences），真正的常亮由 syncAwakeLock() 依
-   * 「开关 && 正在充电」去调 setWindowKeepScreenOn。这里额外做一次立即同步，
-   * 免得等 3 秒的充电状态轮询才生效。
+   * 开关只表达意图（写 preferences），真正的动作由 daemon 执行：
+   *   on  → `hidumper -a -f` 清残锁，再 `power-shell timeout -o 86400000`
+   *   off → `power-shell timeout -r` + `hidumper -a -f` 双清理
+   * 这样即使 App 被杀，还原责任仍在常驻的 daemon 身上。
    */
-  async toggleStayAwakeWhileCharging(isOn: boolean): Promise<void> {
+  toggleStayAwakeWhileCharging(isOn: boolean): void {
     this.stayAwakeWhileCharging = isOn;
     const busDir = this.busClient.getBusDir();
     TrustManager.setStayAwakeWhileCharging(isOn, busDir);
 
-    // 立即同步，不等 3 秒轮询 —— 用户点了就该马上有反馈
+    // 清掉幂等标记，强制 syncAwakeLock 重新评估并下发一次。
+    // 不在这里额外 execute 一遍：否则"关掉"会在同一时刻发两条 off（实测复现过）。
+    this.awakeApplied = '';
     this.syncAwakeLock();
+    this.refreshScreenState();
 
     if (!isOn) {
-      // 兼容老版本：清掉历史上可能残留的 timeout override（幂等，没有就无效返回）
-      await this.busClient.execute('power-shell timeout -r');
-      this.lastResult = '已关闭「充电时不熄屏」：已撤销窗口常亮，恢复系统熄屏设置。';
+      this.lastResult = '已关闭「充电时不熄屏」：已恢复系统熄屏设置。';
       return;
     }
 
     this.lastResult = this.isCharging
-      ? '已开启「充电时不熄屏」：正在充电，本页面内保持亮屏。切到后台或离开本页面后失效。'
-      : '已开启「充电时不熄屏」：当前未充电，插入充电器后保持亮屏。';
+      ? '已开启「充电时不熄屏」：正在充电，屏幕将不再自动熄灭（全局生效，退出 App 也保持）。'
+      : '已开启「充电时不熄屏」：当前未充电，插入充电器后生效。';
   }
 
   /** 电池：走原生 API（hidumper -s BatteryService 实测拿不到数据） */
@@ -901,7 +952,7 @@ struct Index {
                 .fontColor('#E2E8F0')
                 .fontWeight(FontWeight.Medium)
               Text(this.stayAwakeWhileCharging
-                ? (this.isCharging ? '已开启 · 正在充电，本页面保持常亮' : '已开启 · 未充电，插电后生效')
+                ? (this.isCharging ? '已开启 · 正在充电，屏幕不会自动熄灭' : '已开启 · 未充电，插电后生效')
                 : '已关闭（遵循系统熄屏设置）')
                 .fontSize(10)
                 .fontColor(this.stayAwakeWhileCharging
@@ -925,9 +976,49 @@ struct Index {
         .borderRadius(10)
         .margin({ bottom: 8 })
 
+        // ===== 真实状态（来自 daemon 记账 + 屏幕亮灭探测）=====
+        Row() {
+          Text('当前状态')
+            .fontSize(11)
+            .fontColor('#94A3B8')
+          Blank()
+          Text(this.screenOverride
+            ? `常亮覆盖中 · 单次 ${Math.round(this.screenOverrideMs / 3600000)} 小时`
+            : '无覆盖 · 使用系统超时')
+            .fontSize(11)
+            .fontColor(this.screenOverride ? '#F59E0B' : '#64748B')
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+        .backgroundColor('#141C28')
+        .borderRadius(10)
+        .margin({ bottom: 8 })
+
+        Row() {
+          Text('屏幕')
+            .fontSize(11)
+            .fontColor('#94A3B8')
+          Blank()
+          Text(this.screenRealState === 'on'
+            ? '亮'
+            : (this.screenRealState === 'off' ? '灭' : '未知'))
+            .fontSize(11)
+            .fontColor(this.screenRealState === 'on'
+              ? '#4ADE80'
+              : (this.screenRealState === 'off' ? '#64748B' : '#475569'))
+          Text(' · 来自系统日志，最多滞后 1 分钟')
+            .fontSize(10)
+            .fontColor('#475569')
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+        .backgroundColor('#141C28')
+        .borderRadius(10)
+        .margin({ bottom: 8 })
+
         Text(this.stayAwakeWhileCharging
-          ? '用系统窗口常亮接口实现，只在 HMArkPriv 处于前台时有效（切后台由系统回收）。系统判定为非常规使用时可能强制恢复自动熄屏。'
-          : '鸿蒙开发者选项里的「保持唤醒状态」是系统级的（插电就一直亮）；此开关是本项目的替代实现，范围仅限本页面。')
+          ? '由常驻 daemon 执行 power-shell timeout，全局生效：退出 App、切后台都保持。停止 daemon 或重启手机后自动恢复系统设置。'
+          : '开关打开后，插着充电器时屏幕不再自动熄灭。关闭会同时清掉超时覆盖和任何残留的屏幕锁。')
           .fontSize(10)
           .fontColor('#475569')
           .lineHeight(15)

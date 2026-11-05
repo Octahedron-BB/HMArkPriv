@@ -516,15 +516,15 @@ MDM Kit 里对应的接口是 `applicationManager.addDisallowedRunningBundlesSyn
 
 ### 5. 电池与电源策略深度联动（Battery & Power）
 
-#### 5.0 充电常亮：最终改用 window 常亮接口（2026-11-05 二次重构）
+#### 5.0 充电常亮：最终方案（2026-11-05 三次重构后定稿）
 
-**方案演进（三次，前两次都不对，记下来免得再走回头路）**
+**方案演进（三次，前两次都不对）**
 
 | 方案 | 结果 | 问题 |
 |------|------|------|
-| `power-shell timeout -o 86400000` | 能用 | 污染用户设置、必须还原、还原失败就成"幽灵常亮" |
+| `power-shell timeout -o 86400000` | ✅ **最终采用** | 本身没问题，难点在"状态无法回读"，见下 |
 | `runningLock` + `RunningLockType.BACKGROUND` | **完全无效** | 语义搞反了，见下 |
-| `window.setWindowKeepScreenOn()` | ✅ 实测生效 | 仅前台有效（窗口级） |
+| `window.setWindowKeepScreenOn()` | 生效但范围不对 | 窗口级，切后台即失效，不是"充电时不熄屏" |
 
 **为什么 `runningLock.BACKGROUND` 是无效实现**
 
@@ -534,43 +534,88 @@ MDM Kit 里对应的接口是 `applicationManager.addDisallowedRunningBundlesSyn
 3. `@ohos.runningLock` 对三方应用只有三个类型：`BACKGROUND` /
    `PROXIMITY_SCREEN_CONTROL` / `BACKGROUND_USER_IDLE`（API 23+），**没有 SCREEN**。
 
-之前误判为"有效"，是因为旧验证只看了 hilog 里 `screenOn:true` 的行数 ——
-那个判据会被「注视屏幕不熄屏」干扰，不能单独用来证明锁生效。真正的判据是
-`hidumper -s PowerManagerService -a -r` 里有没有本应用 uid 的 SCREEN 锁。
+调用不报错，所以肉眼上"像生效"。**真正的判据**是
+`hidumper -s PowerManagerService -a -r` 里有没有本应用 uid 的 SCREEN 锁，
+而不是 hilog 里 `screenOn:true` 的行数（那个会被「注视屏幕不熄屏」干扰）。
 
-**正确实现（已真机实测）**：`window.setWindowKeepScreenOn(true/false)`
+**为什么最终回到 timeout**
 
-- @since 9，公开接口，**无需声明任何权限**
-- 系统在窗口维度挂一把 SCREEN 锁，锁名形如 `windowLock_<windowId>_<ts>`
-- 实测记录（真机 33Z0224430072393，开关在前台页面上）：
+`window.setWindowKeepScreenOn` 实测能加 SCREEN 锁（`windowLock_<id>_<ts>`），
+但它是**窗口级**的：App 切后台、页面销毁就没了。而"充电时不熄屏"在 Android 上
+是设备级设置（`STAY_ON_WHILE_PLUGGED_IN`），语义要求"退出 App 也保持"。
 
-| 操作 | `SCREEN` 锁数量 | 新增的锁 |
-|------|----------------|----------|
-| 开关关 | 1 | —（只剩系统自己的） |
-| **开关开** | **2** | `type=SCREEN name=windowLock_1090_... uid=20020040 pid=3749`（窗口服务代持） |
-| 再关 | 1 | 已回收 ✅ |
+所以最终：**`power-shell timeout -o 86400000` + daemon 执行 + daemon 记账**。
+把"谁来还原"从 UI 生命周期挪到常驻进程，就消除了"幽灵常亮"的最大风险源。
 
-**已知限制（必须在 UI 上说清，不能吹）**
+**真正的难点：状态无法回读（实测，uid 2000）**
 
-- 锁挂在窗口上：**App 退到后台 / 页面销毁即失效**，不是 Android 那种全设备级开关
-- 系统文档明确：检测到"非常规使用"（如无交互、非导航/视频/游戏场景）时，
-  **可能主动恢复自动熄屏**。这是平台策略，App 侧绕不过去
+| 读法 | 结果 |
+|------|------|
+| `hidumper -s PowerManagerService -a -s > f` | **f 是 0 字节**（正文只在 tty 输出） |
+| `power-shell timeout -r > f` | **f 是 0 字节** |
+| `hidumper --zip` | 生成了文件，但 `/data/log/hidumper` **Permission denied** |
+| `settings get` / 设置数据库 | 命令不存在 / **Permission denied** |
+| `/sys/power/*`、`param get` | SELinux 拒绝 / 无此键 |
+| `hilog -x > f` | ✅ **可用**（8212 行 / 310ms，管道也正常） |
 
-**实现要点**
+**写操作却照常生效**（无输出，但副作用真实）：
+`hidumper -a -f` 在无 tty 下把 SCREEN 锁从 1 清到 0，只是不会打印任何东西。
 
-- `ScreenAwakeController` 改为懒取主窗口：`window.getLastWindow(ctx)`，
-  页面 `aboutToAppear` 里 `bindWindow()` 注入，避免每次开关都异步取
-- 判断条件：`开关开 && 正在充电`，在 `tickCharge()` 里每 3 秒同步一次
-- `onPageShow` 补一次 `syncAwakeLock()`：从后台回前台，窗口锁已被系统回收，
-  不补这一下会出现"开关是开的但没生效"
-- daemon 侧的 `check_stay_awake()` **已整体移除**，只保留启动时的
-  `power-shell timeout -r` 兜底清理（清掉旧版本可能残留的 override）
+→ 结论：只能"盲写 + 记账"，但有两块可靠的旁证：
+1. **`hilog` 里有 override 事件**（含值、pid、uid）：
+   `I C02902/powermgr/PowerSvc: Try to override screenOffTime, timeout=86400000, pid: ..., uid: 2000`
+   注意 `timeout -r` **不打日志**，所以"当前有无 override"仍只能靠记账。
+2. **`hilog` 里屏幕亮灭**：sceneboard 约每分钟一行
+   `ClockData: needUpdateLockTime screenOn:true|false`，取最后一行即最近状态（滞后 ≤1 分钟）。
 
+**实现（daemon 侧）**
+
+- 内部命令（走同一套总线协议，前缀 `__hmpriv_` 避免和真实 shell 命令冲突）：
+  - `__hmpriv_screen_on` → 先 `hidumper -a -f` 清残锁，再 `timeout -o 86400000`
+  - `__hmpriv_screen_off` → `timeout -r` + `hidumper -a -f` 双清理
+  - `__hmpriv_screen_status` → 返回记账值 + 当前探测到的屏亮状态
+- 状态文件 `screen_state.txt`（App 直读）：
+  ```
+  override=0|1
+  timeout=<毫秒>
+  screen=on|off|unknown
+  ts=<秒>
+  ```
+- `probe_screen()` 每 **30 秒**一次（`hilog -x` 单次 310ms；50ms×600）。
+  不用 `local`：本机 sh 是精简实现，POSIX 不保证支持。
+- 启动时无条件 `timeout -r` **+ `hidumper -a -f`**，从干净状态起步。
+
+**实现（App 侧）**
+
+- `ScreenAwakeController.ets` **已删除**（窗口锁方案作废）
+- 意图判断：`开关开 && 正在充电` → 发 on，否则发 off；用 `awakeApplied` 做幂等，
+  避免每 3 秒重复下发同一条命令
+- 失败要重置 `awakeApplied = ''`，否则会卡在"以为已应用"
+- `initBusDir` 成功后补一次 `refreshScreenState()` + `syncAwakeLock()`：
+  onPageShow 早于 initBusDir（实测早 33ms），且 daemon 重启后需要 App 重新下发意图
+
+**端到端实测（真机 33Z0224430072393）**
+
+| 操作 | 系统 `ScreenOffTime` | 静置 90 秒后 |
+|------|---------------------|-------------|
+| 开关开 | `Timeout=60000ms  OverrideTimeout=86400000ms` | `Current State: AWAKE` ✅ 不熄 |
+| 开关关 | `Timeout=60000ms`（无 override） | `Current State: SLEEP` ✅ 正常熄 |
+
+**注意**：熄屏后系统自己也会设一个 `OverrideTimeout=10000ms`（SLEEP 态的超时），
+所以**不能**用"系统里有无 OverrideTimeout"判断"是不是我们在常亮" —— 必须看记账。
+
+**残留限制**：记账只知道"我们设了什么"。如果用户在终端里手动 `power-shell
+timeout -o`，App 不会知道。自用场景可接受；需要更严时可扫 hilog 的 override 事件
+比对 pid/uid 发现外部变更。
 
 #### 5.0.1 排查"不熄屏"的两天踩坑记录
 
 用户反馈「关了充电不熄屏，手机还是不熄屏，怀疑卡在 24 小时」。
-排查结论：**不是我们 App 的问题**，是三个因素叠加导致的误判。
+
+> **[2026-11-05 更正]** 本章当时的结论「不是我们 App 的问题」**不完整**。
+> 真正的主因是排查过程中执行了 `hidumper -a -t`，它给 powermgr 挂了一把
+> 永不释放的常亮锁（详见 §5.0.4）。下面三个因素确实存在，但都只是干扰项。
+> 保留原文是因为"怎么被误导"的过程本身有价值。
 
 **因素一：「注视屏幕不熄屏」开着**
 
@@ -666,9 +711,12 @@ PowerManagerService）在 shell 权限下**只返回两行标题、零字段**�
 - [x] 工程目录统一为 `arkui_app`（下划线命名，Windows/macOS 通用）
 - [x] 修复 daemon 幽灵常亮、多行命令截断、`.gitattributes` 强制 LF
 - [x] **修复「偶发响应超时」**（2026-11-05，详见下方说明）
-- [x] **充电常亮改用 `window.setWindowKeepScreenOn`**（见 §5.0；`runningLock.BACKGROUND` 是无效实现，已废弃），daemon 侧旧逻辑已移除
-- [ ] **系统的 `PowerMgrKeepOnLock` 无法由 App 清除**（见 §5.0.4）——
-      需要用户在开发者选项里关「保持唤醒状态」或拔线
+- [x] **充电常亮定稿**：`power-shell timeout -o` 由 daemon 执行并记账（见 §5.0）。
+      `runningLock.BACKGROUND` 与 `setWindowKeepScreenOn` 两条路都已排除
+- [x] **`PowerMgrKeepOnLock` 的真凶查明**：是 `hidumper -a -t` 挂的，用 `-a -f` 清除
+      （见 §5.0.4）。已加入 daemon 的启动 / 开关常备动作
+- [ ] **屏幕超时的精确回读**：目前只能记账（不依赖 tty 的读接口全被封）。
+      若将来需要，可考虑用 hdc 侧查询或扫 hilog 的 override 事件做外部变更检测
 
 ### 5.0.3 修复「指令偶尔提示响应超时」（2026-11-05）
 
@@ -701,9 +749,9 @@ PowerManagerService）在 shell 权限下**只返回两行标题、零字段**�
 不再误报超时。
 
 
-#### 5.0.4 系统自己的常亮锁：`PowerMgrKeepOnLock`（重要，别背锅）
+#### 5.0.4 `PowerMgrKeepOnLock` 的真凶：`hidumper -a -t`（我自己踩的坑）
 
-把开关关掉后屏幕**仍然**不熄，一度以为是我们没释放锁。实测排除了自己：
+现象：开关关掉后屏幕**仍然**不熄，一度以为是我们没释放锁。
 
 ```
 $ hidumper -s PowerManagerService -a -r
@@ -713,28 +761,51 @@ $ aa force-stop com.octahedron.hmpriv        # 把我们 App 彻底杀掉
 $ hidumper -s PowerManagerService -a -r       # 锁仍在，纹丝不动
 ```
 
-- `uid=5528 pid=1502` = **powermgr 自己**（`ps -ef` 里 `powermgr 1502 1 1`），
-  不是任何第三方 App；`aa force-stop` 杀不掉它
-- 状态机里 DIM 的失败原因直接写着 `Blocked by running lock`
-  （`hidumper -s PowerManagerService -a -s`）
-- 系统超时本身是好的：`ScreenOffTime: Timeout=60000ms`，说明旧版 24 小时
-  override 已被 daemon 启动时的 `timeout -r` 清干净
+- `uid=5528 pid=1502` = **powermgr 自己**，不是任何第三方 App，`force-stop` 杀不掉
+- 状态机里 DIM 的失败原因写着 `Blocked by running lock`
+- 系统超时本身是好的：`ScreenOffTime: Timeout=60000ms`
 
-**推断来源**：设置 → 系统 → 开发者选项 →「保持唤醒状态（充电时屏幕不休眠）」。
-该选项由电源服务内部持锁实现（所以归属 powermgr），且**只在插电时生效**。
-本机 `pluggedType=2`（USB）、`chargingStatus=3`（已充满）—— 一直在充电，
-所以这把锁一直挂着。
+**真凶查明了，是我自己**。我在排查时执行过一次
+`hidumper -s PowerManagerService -a -t`（help 里写着 "keep screen on"，
+我以为是只读查询），结果它**真的给 powermgr 挂了一把永不释放的 SCREEN 锁**：
 
-**排查顺序（下次再遇到别急着改代码）**
+```
+$ hidumper -s PowerManagerService -a -r      # 执行 -t 前
+  SCREEN: 0
+$ hidumper -s PowerManagerService -a -t      # 执行
+$ hidumper -s PowerManagerService -a -r      # 执行后
+  SCREEN: 1
+  index=1 type=SCREEN name=PowerMgrKeepOnLock uid=5528 pid=1502 state=1
+$ hidumper -s PowerManagerService -a -f      # 唯一的解法
+  SCREEN: 0
+```
 
-1. `hidumper -s PowerManagerService -a -r` 看有没有 `PowerMgrKeepOnLock`
-   —— 有就说明是系统级常亮，跟 App 无关
-2. `aa force-stop <本应用>` 再 dump 一次，确认不是自己
-3. `hidumper -s PowerManagerService -a -s` 看 `ScreenOffTime` 和 DIM 失败原因
-4. 让用户拔掉充电线（或关掉开发者选项那一项）复测
+这完全解释了用户说的「**开始研究充电不熄屏之后才变得不能熄屏**」——
+不是功能写错，是排查过程本身污染了系统状态。
 
-**注意**：`hidumper -s PowerManagerService -a -t`（帮助里写"keep screen on"）
-实测**没有任何效果**，别拿它当解法。
+**关键结论**
+
+| 命令 | 副作用 |
+|------|--------|
+| `hidumper -s PowerManagerService -a -t` | **加**一把永久 `PowerMgrKeepOnLock` |
+| `hidumper -s PowerManagerService -a -f` | **释放**它，并 restore screen off time |
+| `power-shell timeout -r` | **只**恢复超时值，**解不掉** `-t` 加的那把锁 |
+
+所以 `-f` 现在是 daemon 的常备动作：启动时、开常亮前、关常亮时都执行一次。
+
+**排查顺序（下次别再怀疑自己）**
+
+1. `hidumper -s PowerManagerService -a -r` 看 SCREEN 锁列表：
+   - `name=PowerMgrKeepOnLock uid=<powermgr>` → 是 `-t` 留下的，`-f` 清
+   - `name=windowLock_* uid=<某应用>` → 某个 App 的 `setWindowKeepScreenOn`
+   - 没有 → 看第 2 步
+2. `hidumper -s PowerManagerService -a -s` 看 `ScreenOffTime`：
+   - 有 `OverrideTimeout` → 有人在 override，记账查是谁
+   - 只有 `Timeout` 且状态 = `AWAKE` 很久 → 检查「注视屏幕不熄屏」
+3. `aa force-stop <本应用>` 再 dump 一次，确认不是自己
+
+**教训**：`hidumper -a <x>` 里带短选项的不一定是查询。`-t` 是**动作**，
+`-f` 是它的逆操作。动手前先看 `hidumper -s <SA> -a -h`。
 
 ### 待办
 - [ ] **daemon 保活**：系统回收后需手动重启，App 内应能一键重新部署
