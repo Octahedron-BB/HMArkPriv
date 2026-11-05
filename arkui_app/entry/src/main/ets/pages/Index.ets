@@ -178,6 +178,8 @@ struct Index {
       this.connecting = false;
       this.stayAwakeWhileCharging = TrustManager.isStayAwakeWhileCharging(dir);
       this.refreshDaemonStatus();
+      // 清理旧版明文令牌残留（幂等，没有残留时不做任何事）
+      TrustManager.purgeLegacyTokens(ctx, dir);
       if (!ok) {
         this.lastResult = `总线可读，但部分文件初始化失败：\n${dir}`;
       }

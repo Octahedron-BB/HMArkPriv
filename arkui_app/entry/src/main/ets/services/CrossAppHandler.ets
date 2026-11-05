@@ -137,8 +137,8 @@ export class CrossAppHandler {
     if (want.action === ACTION_REQUEST_TOKEN) {
       const trusted = await TrustManager.isTrusted(context, caller);
       if (trusted) {
-        const busDir = BusDirManager.findAccessibleBusDir();
-        const token = await TrustManager.generateToken(context, caller, busDir);
+        // 明文令牌只经 Want result 回传，App 侧只留哈希
+        const token = await TrustManager.generateToken(context, caller);
         await CrossAppHandler.reply(context, RESULT_OK, { token: token });
         return;
       }
@@ -218,8 +218,7 @@ export class CrossAppHandler {
     }
 
     if (p.isTokenRequest) {
-      const busDir = BusDirManager.findAccessibleBusDir();
-      const token = await TrustManager.generateToken(ctx, p.caller, busDir);
+      const token = await TrustManager.generateToken(ctx, p.caller);
       await CrossAppHandler.reply(ctx, RESULT_OK, { token: token });
     } else {
       await CrossAppHandler.executeAndReply(ctx, p.cmd);

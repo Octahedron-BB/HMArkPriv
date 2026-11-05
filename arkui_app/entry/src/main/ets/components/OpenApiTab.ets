@@ -11,6 +11,7 @@
 
 import { common } from '@kit.AbilityKit';
 import { promptAction } from '@kit.ArkUI';
+import { pasteboard } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { BusClient } from '../services/BusClient';
 import { TrustManager, CallerRecord, TokenRecord } from '../services/TrustManager';
@@ -32,6 +33,12 @@ export struct OpenApiTab {
   @State inputBundle: string = '';
   @State inputTokenBundle: string = '';
   @State loading: boolean = true;
+  /** 刚签发的明文令牌（只此一次可见，App 不保存） */
+  @State newTokenPlain: string = '';
+  @State newTokenBundle: string = '';
+  @State isTokenIssuedOpen: boolean = false;
+  /** 是否曾经启用过令牌鉴权 */
+  @State tokenInited: boolean = false;
 
   aboutToAppear(): void {
     this.refreshAll();
@@ -58,6 +65,7 @@ export struct OpenApiTab {
     this.blocked = await TrustManager.getBlocked(ctx);
     this.callLog = await TrustManager.getCallLog(ctx);
     this.tokens = await TrustManager.getTokens(ctx);
+    this.tokenInited = await TrustManager.isTokenInited(ctx);
     this.auditLogs = TrustManager.getAuditLog(busDir);
 
     this.loading = false;
@@ -143,18 +151,21 @@ export struct OpenApiTab {
       return;
     }
     const ctx = getContext(this) as common.UIAbilityContext;
-    const busDir = this.busClient.getBusDir();
-    await TrustManager.generateToken(ctx, name, busDir);
+    const plain = await TrustManager.generateToken(ctx, name);
     this.inputTokenBundle = '';
     this.tokens = await TrustManager.getTokens(ctx);
-    this.toast(`已为 ${name} 签发极速总线令牌`);
+    this.tokenInited = await TrustManager.isTokenInited(ctx);
+    // 明文只此一次可见：留在弹窗里让用户复制，App 侧不保存
+    this.newTokenPlain = plain;
+    this.newTokenBundle = name;
+    this.isTokenIssuedOpen = true;
   }
 
   async revokeToken(name: string): Promise<void> {
     const ctx = getContext(this) as common.UIAbilityContext;
-    const busDir = this.busClient.getBusDir();
-    await TrustManager.revokeToken(ctx, name, busDir);
+    await TrustManager.revokeToken(ctx, name);
     this.tokens = await TrustManager.getTokens(ctx);
+    this.tokenInited = await TrustManager.isTokenInited(ctx);
     this.toast(`已吊销 ${name} 的令牌`);
   }
 
@@ -186,8 +197,9 @@ export struct OpenApiTab {
   }
 
   build() {
-    Scroll() {
-      Column() {
+    Stack({ alignContent: Alignment.Center }) {
+      Scroll() {
+        Column() {
         // ============ 服务状态 ============
         this.SectionTitle('服务状态')
 
@@ -248,7 +260,13 @@ export struct OpenApiTab {
         .alignItems(HorizontalAlign.Start)
 
         // ============ 白名单 ============
-        this.SectionTitle(`白名单（${this.trusted.length}）`)
+        // 同上：不用 SectionTitle，避免 @Builder 按值传参导致计数不刷新
+        Text(`白名单（${this.trusted.length}）`)
+          .fontSize(13)
+          .fontColor('#94A3B8')
+          .fontWeight(FontWeight.Bold)
+          .margin({ bottom: 8 })
+          .width('100%')
 
         // 添加输入框
         Row() {
@@ -321,7 +339,12 @@ export struct OpenApiTab {
 
         // ============ 黑名单 ============
         if (this.blocked.length > 0) {
-          this.SectionTitle(`已拉黑（${this.blocked.length}）`)
+          Text(`已拉黑（${this.blocked.length}）`)
+            .fontSize(13)
+            .fontColor('#94A3B8')
+            .fontWeight(FontWeight.Bold)
+            .margin({ bottom: 8 })
+            .width('100%')
           Column() {
             ForEach(this.blocked, (name: string, idx: number) => {
               Row() {
@@ -449,7 +472,15 @@ export struct OpenApiTab {
         }
 
         // ============ 极速总线模式：授权令牌管理 ============
-        this.SectionTitle(`极速总线授权令牌（${this.tokens.length}）`)
+        // 【注意】这里不用 SectionTitle(`...${this.tokens.length}`) ——
+        // @Builder 的参数是按值传入，首次构建后不会随 @State 变化重建，
+        // 会导致计数永远显示 0。内联 Text 才能正确响应。
+        Text(`极速总线授权令牌（${this.tokens.length}）`)
+          .fontSize(13)
+          .fontColor('#94A3B8')
+          .fontWeight(FontWeight.Bold)
+          .margin({ bottom: 8 })
+          .width('100%')
 
         // 签发输入框
         Row() {
@@ -476,15 +507,39 @@ export struct OpenApiTab {
         .margin({ bottom: 8 })
 
         if (this.tokens.length === 0) {
-          Row() {
-            Text('暂无令牌。只有拥有有效令牌的 App 才能通过极速总线静默执行。')
+          Column() {
+            Text(this.tokenInited
+              ? '已启用令牌鉴权，但当前没有任何有效令牌。\n' +
+                '此时极速总线处于「完全封锁」状态：任何调用都会被拒绝（RC:403）。\n' +
+                '签发一个令牌才会重新开放。'
+              : '尚未设置令牌。\n' +
+                '⚠️ 当前极速总线不要求令牌 —— 只要能写总线目录就能执行命令。\n' +
+                '建议为每个调用方签发令牌以启用校验。')
               .fontSize(11)
-              .fontColor('#64748B')
+              .fontColor(this.tokenInited ? '#FBBF24' : '#F87171')
+              .lineHeight(16)
+              .width('100%')
+
+            // 只有"启用了但没令牌"时才给重置入口，避免误触
+            if (this.tokenInited) {
+              Text('彻底停用令牌机制')
+                .fontSize(11)
+                .fontColor('#64748B')
+                .padding({ top: 8, bottom: 2 })
+                .onClick(async () => {
+                  const ctx = getContext(this) as common.UIAbilityContext;
+                  await TrustManager.resetTokenMechanism(ctx);
+                  this.tokens = await TrustManager.getTokens(ctx);
+                  this.tokenInited = await TrustManager.isTokenInited(ctx);
+                  this.toast('已停用令牌机制，总线回到不要求令牌的状态');
+                })
+            }
           }
           .width('100%')
           .padding(12)
-          .backgroundColor('#1A2332')
+          .backgroundColor(this.tokenInited ? '#2A2415' : '#2A1515')
           .borderRadius(8)
+          .alignItems(HorizontalAlign.Start)
           .margin({ bottom: 12 })
         } else {
           Column() {
@@ -495,7 +550,7 @@ export struct OpenApiTab {
                     .fontSize(12)
                     .fontColor('#C3E88D')
                     .fontFamily('JetBrains Mono, Consolas, monospace')
-                  Text(`Token: ${tok.token.substring(0, 8)}...${tok.token.substring(tok.token.length - 4)}`)
+                  Text(`sha256: ${tok.hash.substring(0, 16)}...`)
                     .fontSize(10)
                     .fontColor('#64748B')
                     .fontFamily('JetBrains Mono, Consolas, monospace')
@@ -608,13 +663,103 @@ export struct OpenApiTab {
           .fontColor('#94A3B8')
           .margin({ bottom: 24 })
           .onClick(() => this.refreshAll())
+        }
+        .width('100%')
+        .padding(12)
       }
       .width('100%')
-      .padding(12)
+      .height('100%')
+      .scrollBar(BarState.Auto)
+
+      // ===== 明文令牌弹窗（只此一次可见）=====
+      // if 内只放一个容器：ArkUI 对 if 分支里多个并列根组件处理不稳定
+      if (this.isTokenIssuedOpen) {
+        Stack({ alignContent: Alignment.Center }) {
+          Column()
+            .width('100%')
+            .height('100%')
+            .backgroundColor('#CC000000')
+
+          Column() {
+          Row() {
+            Text('🔑')
+              .fontSize(18)
+              .margin({ right: 8 })
+            Text('令牌已签发')
+              .fontSize(15)
+              .fontColor('#E2E8F0')
+              .fontWeight(FontWeight.Bold)
+              .layoutWeight(1)
+          }
+          .width('100%')
+          .margin({ bottom: 12 })
+
+          Text(`调用方：${this.newTokenBundle}`)
+            .fontSize(11)
+            .fontColor('#82B1FF')
+            .fontFamily('JetBrains Mono, Consolas, monospace')
+            .width('100%')
+            .margin({ bottom: 10 })
+
+          Text('这是令牌明文，只显示这一次。请立即复制并交给该应用，\n' +
+               '关闭后无法再次查看（App 只保存 sha256 哈希）。')
+            .fontSize(11)
+            .fontColor('#FBBF24')
+            .lineHeight(16)
+            .width('100%')
+            .margin({ bottom: 10 })
+
+          Text(this.newTokenPlain)
+            .fontSize(11)
+            .fontColor('#C3E88D')
+            .fontFamily('JetBrains Mono, Consolas, monospace')
+            .width('100%')
+            .padding(10)
+            .backgroundColor('#0D1527')
+            .borderRadius(6)
+            .margin({ bottom: 14 })
+
+          Button('复制令牌')
+            .width('100%')
+            .fontSize(13)
+            .height(38)
+            .backgroundColor('#38BDF8')
+            .fontColor('#090D16')
+            .margin({ bottom: 8 })
+            .onClick(() => {
+              pasteboard.getSystemPasteboard().setData(
+                pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, this.newTokenPlain)
+              ).then(() => {
+                this.toast('令牌已复制到剪贴板');
+              }).catch(() => {
+                this.toast('复制失败，请长按手动选择文本');
+              });
+            })
+
+          Button('我已保存，关闭')
+            .width('100%')
+            .fontSize(13)
+            .height(38)
+            .backgroundColor('#1E293B')
+            .fontColor('#94A3B8')
+            .onClick(() => {
+              this.isTokenIssuedOpen = false;
+              this.newTokenPlain = '';
+              this.newTokenBundle = '';
+            })
+        }
+        .width('86%')
+        .padding(16)
+        .backgroundColor('#1A2332')
+        .borderRadius(12)
+        .alignItems(HorizontalAlign.Start)
+        }
+        .width('100%')
+        .height('100%')
+      }
     }
     .width('100%')
     .height('100%')
-    .scrollBar(BarState.Auto)
   }
 
   @Builder

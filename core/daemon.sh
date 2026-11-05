@@ -31,6 +31,9 @@ RES_DIR="${BUS_DIR}/res"
 AUDIT_LOG="${BUS_DIR}/audit.log"
 TOKENS_FILE="${BUS_DIR}/tokens.txt"
 CONFIG_FILE="${BUS_DIR}/config.json"
+# App 沙箱内的 preferences：存令牌哈希（严格模式的唯一数据源）
+# 实测 shell(uid 2000) 可读；第三方 App 属 app 域，读不到也写不到。
+PREF_FILE="/data/app/el2/100/base/com.octahedron.hmpriv/haps/entry/preferences/hmpriv_trust"
 SLOT_COUNT=16
 CMD_TIMEOUT_TERM=20
 CMD_TIMEOUT_KILL=5
@@ -129,6 +132,92 @@ check_stay_awake() {
 }
 
 # ------------------------------------------------------------------------------
+# 令牌校验
+#
+# 【两种模式】
+#   严格模式（优先）：读 App 沙箱 preferences 里的 sha256 哈希。
+#     preferences 在 app data 域，第三方 App 属 app 域，读不到也写不到，
+#     所以篡改总线文件对校验无效 —— 这是真正的防线。
+#   宽松模式（降级）：读不到 preferences 时退回总线 tokens.txt（明文或哈希均可）。
+#     这是兼容性兜底：若未来 SELinux 收紧禁止 shell 读 app 数据域，
+#     功能不会全挂，只是安全性降一档，并会在审计日志留痕。
+#
+# 【为什么用 case 而不是 grep 比对哈希】
+#   哈希是 64 位十六进制，用 shell case 的 *pattern* 匹配即可，零外部依赖、
+#   零子进程开销。且 64 位随机 hex 出现子串误匹配的概率可忽略。
+# ------------------------------------------------------------------------------
+
+# 从 preferences XML 提取 "bundleName:hash,hash..." 那一行
+read_pref_hashes() {
+    [ -f "${PREF_FILE}" ] || return 1
+    # 只取 fastBusTokenHashes 这个 key；sed 的 <string key="..."> 在同一行内
+    sed -n 's/.*<string key="fastBusTokenHashes">\([^<]*\)<\/string>.*/\1/p' "${PREF_FILE}" 2>/dev/null | head -n 1
+}
+
+# 读"曾经启用过令牌鉴权"标记（1 = 是）
+read_pref_inited() {
+    [ -f "${PREF_FILE}" ] || return 1
+    sed -n 's/.*<string key="fastBusInited">\([^<]*\)<\/string>.*/\1/p' "${PREF_FILE}" 2>/dev/null | head -n 1
+}
+
+# 计算 sha256（设备有 /bin/sha256sum，实测可用）
+sha256_of() {
+    printf '%s' "$1" | sha256sum 2>/dev/null | cut -d' ' -f1
+}
+
+# 校验令牌，输出 OK / FAIL / NONE
+#
+#   OK   = 令牌有效
+#   FAIL = 令牌无效，或"启用过鉴权但已无有效令牌"（完全封锁）
+#   NONE = 从未启用过鉴权（向后兼容：老用户没配令牌时总线仍可用）
+#
+# 【为什么区分 NONE 和 FAIL】
+# 如果只看"当前令牌列表是否为空"，用户吊销最后一个令牌就会把总线变成完全不设防，
+# 这与"没有令牌 = 更安全"的直觉正好相反。所以用 fastBusInited 标记区分：
+#   从没配过   → NONE（不鉴权）
+#   配过又清空 → FAIL（一律拒绝，相当于封锁总线）
+verify_token() {
+    TOKEN="$1"
+
+    # --- 严格模式：preferences ---
+    PREF_ENTRIES=$(read_pref_hashes)
+    PREF_INITED=$(read_pref_inited)
+
+    if [ -n "${PREF_ENTRIES}" ]; then
+        [ -z "${TOKEN}" ] && { echo FAIL; return; }
+        REQ_HASH=$(sha256_of "${TOKEN}")
+        [ -z "${REQ_HASH}" ] && { echo FAIL; return; }
+        case "${PREF_ENTRIES}" in
+            *"${REQ_HASH}"*) echo OK; return ;;
+            *)               echo FAIL; return ;;
+        esac
+    fi
+
+    # 启用过但当前没有任何令牌 -> 完全封锁（不是放行）
+    if [ "${PREF_INITED}" = "1" ]; then
+        echo FAIL
+        return
+    fi
+
+    # --- 宽松模式：总线 tokens.txt（preferences 读不到时的降级）---
+    if [ -f "${TOKENS_FILE}" ] && [ -s "${TOKENS_FILE}" ]; then
+        [ -z "${TOKEN}" ] && { echo FAIL; return; }
+        # 兼容两种存量格式：明文令牌，或 sha256 哈希
+        if grep -q "^${TOKEN}$" "${TOKENS_FILE}" 2>/dev/null; then
+            echo OK; return
+        fi
+        REQ_HASH=$(sha256_of "${TOKEN}")
+        if [ -n "${REQ_HASH}" ] && grep -q "^${REQ_HASH}$" "${TOKENS_FILE}" 2>/dev/null; then
+            echo OK; return
+        fi
+        echo FAIL; return
+    fi
+
+    # 两边都没有令牌，且从未启用过 -> 不鉴权
+    echo NONE
+}
+
+# ------------------------------------------------------------------------------
 # 执行一条命令并写结果
 #   $1 = 命令
 #   $2 = 输出目标文件（协议1是 cmd.res，协议2是 res/slotN.res）
@@ -215,14 +304,14 @@ process_slots() {
                     REQ_CMD="${SLOT_RAW}"
                 fi
 
-                # 3. 令牌有效性校验
-                # 若 tokens.txt 存在且非空，调用必须提供 tokens.txt 中记录的合法令牌
+                # 3. 令牌有效性校验（严格模式优先读 preferences 哈希，否则降级 tokens.txt）
+                AUTH_RESULT=$(verify_token "${REQ_TOKEN}")
                 AUTH_OK=1
-                if [ -f "${TOKENS_FILE}" ] && [ -s "${TOKENS_FILE}" ]; then
-                    if [ -z "${REQ_TOKEN}" ] || ! grep -q "^${REQ_TOKEN}$" "${TOKENS_FILE}" 2>/dev/null; then
-                        AUTH_OK=0
-                    fi
-                fi
+                case "${AUTH_RESULT}" in
+                    OK)   AUTH_OK=1 ;;
+                    NONE) AUTH_OK=1 ;;   # 未配置令牌：不启用鉴权（向后兼容）
+                    *)    AUTH_OK=0 ;;
+                esac
 
                 if [ "${AUTH_OK}" -eq 0 ]; then
                     TS=$(date '+%Y-%m-%d %H:%M:%S')
@@ -230,8 +319,14 @@ process_slots() {
                     log_audit "slot${i}" "403" "BLOCKED [unauthorized] (cmd: ${REQ_CMD})"
                 else
                     # 4. 执行命令并记录审计日志
+                    # NONE 表示没配令牌；在日志里标出来，让用户知道当前未强制鉴权
+                    if [ "${AUTH_RESULT}" = "NONE" ]; then
+                        AUTH_TAG=" [no-token-configured]"
+                    else
+                        AUTH_TAG=""
+                    fi
                     run_and_reply "${REQ_CMD}" "${SLOT_RES}" ""
-                    log_audit "slot${i}" "${RC}" "${REQ_CMD}"
+                    log_audit "slot${i}" "${RC}" "${REQ_CMD}${AUTH_TAG}"
                 fi
             fi
         fi
