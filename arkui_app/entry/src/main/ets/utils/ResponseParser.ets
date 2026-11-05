@@ -422,4 +422,64 @@ export class ResponseParser {
     const mb = (totalPss / 1024).toFixed(0);
     return `进程数 ${count}，PSS 合计约 ${mb} MB`;
   }
+
+  // ==========================================================================
+  // bm 命令的成败判定
+  //
+  // 【为什么不能只看 exitCode】
+  // 实测鸿蒙的 bm 工具**失败时退出码仍是 0**，错误信息只写在 stdout 里：
+  //
+  //   bm uninstall -n com.huawei.hmos.minorsprotection -u 100
+  //   → RC:0
+  //     error: failed to uninstall bundle.
+  //     code:9568380
+  //     error: uninstall system app error.
+  //
+  // 所以 CommandResult.success（等于 exitCode === 0）对 bm 系列命令**不可靠**，
+  // 直接用会把失败当成功提示给用户。这里补一层文本判定。
+  // ==========================================================================
+
+  /** bm 输出是否代表失败 */
+  static isBmFailure(raw: string): boolean {
+    if (!raw) {
+      return false;
+    }
+    const t = raw.toLowerCase();
+    // bm 的失败文本特征："error: failed to ..." 或 "code:xxxxx"
+    return t.indexOf('error: failed to') >= 0 || /\n?\s*code:\s*\d{4,}/.test(t);
+  }
+
+  /**
+   * 把 bm 的错误码翻译成能看懂的话。
+   * 错误码来自实测；未收录的直接回显原文，不猜。
+   */
+  static explainBmError(raw: string): string {
+    if (!raw) {
+      return '';
+    }
+    if (raw.indexOf('9568380') >= 0) {
+      return '这是系统镜像集成的应用（appDistributionType = os_integration），' +
+        '鸿蒙不允许卸载。如果不想让它运行，可以用「冻结应用」代替。';
+    }
+    if (raw.indexOf('9568386') >= 0) {
+      return '设备上找不到这个应用，可能已经被卸载了。';
+    }
+    if (raw.indexOf('9568289') >= 0) {
+      return '签名或权限校验未通过，安装/卸载请求被系统拒绝。';
+    }
+    if (raw.indexOf('9568332') >= 0) {
+      return '签名校验失败。';
+    }
+    // 未收录的错误：截取 code 与 error 行回显
+    const codeMatch = raw.match(/code:\s*(\d+)/);
+    const errMatch = raw.match(/error:\s*([^\n]+)/);
+    const parts: string[] = [];
+    if (codeMatch) {
+      parts.push(`错误码 ${codeMatch[1]}`);
+    }
+    if (errMatch) {
+      parts.push(errMatch[1].trim());
+    }
+    return parts.length > 0 ? parts.join('，') : raw.trim();
+  }
 }

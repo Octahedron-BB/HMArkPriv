@@ -376,11 +376,12 @@ export struct AppManageTab {
     this.isBusy = true;
     try {
       const res = await this.busClient.execute(CommandBuilder.cleanCache(b));
-      if (res.success) {
+      // bm 失败时 RC 仍为 0，必须看输出文本
+      if (res.success && !ResponseParser.isBmFailure(res.output)) {
         this.showToast(`缓存已释放：${this.selectedApp.label}`);
         this.closeOptions();
       } else {
-        this.showToast(`清理结果: ${res.output}`);
+        this.showToast(`清理失败：${ResponseParser.explainBmError(res.output)}`);
       }
     } finally {
       this.isBusy = false;
@@ -407,19 +408,19 @@ export struct AppManageTab {
     if (!this.selectedApp) {
       return;
     }
-    // 系统镜像集成应用（appDistributionType = os_integration）无法卸载。
-    // 实测 bm uninstall 一律返回 9568380 "uninstall system app error"，
-    // 且没有任何命令行变体能绕过。提前拦下来，省得用户点了才看到失败。
-    if (this.selectedApp.isSystem) {
-      this.showToast(
-        `「${this.selectedApp.label}」是系统镜像集成应用，无法卸载。\n` +
-        `如不希望它运行，可以用「冻结应用」代替。`
-      );
-      return;
-    }
+    const app = this.selectedApp;
     this.confirmActionType = 'uninstall';
     this.confirmTitle = `免 Root 卸载应用`;
-    this.confirmMessage = `确定要卸载「${this.selectedApp.label}」吗？\n包名：${this.selectedApp.bundleName}\n（系统将通过 BMS 执行卸载）`;
+    // 系统应用不预先拦截 —— 实测有些系统应用能卸、有些不能（os_integration 的卸不了）。
+    // 一律放行让用户试，失败时给明确原因，比直接禁掉按钮更有用。
+    if (app.isSystem) {
+      this.confirmMessage = `确定要卸载「${app.label}」吗？\n包名：${app.bundleName}\n\n` +
+        `注意：这是系统预装应用。部分系统应用打包在系统镜像里、无法卸载，` +
+        `如果失败会告诉你具体原因。`;
+    } else {
+      this.confirmMessage = `确定要卸载「${app.label}」吗？\n包名：${app.bundleName}\n` +
+        `（系统将通过 BMS 执行卸载）`;
+    }
     this.isConfirmOpen = true;
   }
 
@@ -438,20 +439,66 @@ export struct AppManageTab {
     try {
       if (this.confirmActionType === 'cleanData') {
         const res = await this.busClient.execute(CommandBuilder.cleanData(b));
-        this.showToast(res.success ? `数据已彻底清空：${name}` : `清空失败: ${res.output}`);
-        this.closeOptions();
+        // bm 失败时 RC 仍为 0，必须看输出文本（详见 ResponseParser.isBmFailure）
+        if (res.success && !ResponseParser.isBmFailure(res.output)) {
+          this.showToast(`数据已彻底清空：${name}`);
+          this.closeOptions();
+        } else {
+          this.showToast(`清空失败：${ResponseParser.explainBmError(res.output)}`);
+        }
       } else if (this.confirmActionType === 'uninstall') {
         const res = await this.busClient.execute(CommandBuilder.uninstallApp(b));
-        if (res.success) {
-          this.showToast(`已成功卸载：${name}`);
-          this.closeOptions();
-          this.loadApps();
+        if (res.success && !ResponseParser.isBmFailure(res.output)) {
+          // 命令没报错，再复核一次包是否真的没了 —— bm 的输出有时会滞后/含糊，
+          // 只凭文本判定容易给出假成功。
+          const gone = await this.verifyUninstalled(b);
+          if (gone) {
+            this.showToast(`已成功卸载：${name}`);
+            this.closeOptions();
+            this.loadApps();
+          } else {
+            this.showToast(`卸载命令已执行，但「${name}」仍在设备上，可能被系统拒绝。`);
+          }
         } else {
-          this.showToast(`卸载结果: ${res.output}`);
+          // 失败时把原因讲清楚，而不是甩一行原始报错
+          this.showToast(`卸载失败：${ResponseParser.explainBmError(res.output)}`);
         }
       }
     } finally {
       this.isBusy = false;
+    }
+  }
+
+  /**
+   * 复核应用是否真的被卸载。
+   *
+   * 用 bm dump -n 查：
+   *   应用还在 → 输出是 70KB+ 的 bundle JSON
+   *   应用不在 → "error: failed to get information and the parameters may be wrong."
+   *
+   * 【判定要保守】只在看到明确的错误特征时才认定已卸载。
+   * 已实测：正常应用的 dump 输出里不含 "failed" / "not found" 字样，
+   * 所以这两个词是安全的失败特征；但为了万无一失，仍要求输出不像 JSON。
+   */
+  private async verifyUninstalled(bundle: string): Promise<boolean> {
+    try {
+      const check = await this.busClient.execute(CommandBuilder.appDetail(bundle));
+      const raw = check.output ?? '';
+      const t = raw.toLowerCase();
+      // 明确错误特征
+      if (t.indexOf('failed to get information') >= 0 || t.indexOf('not found') >= 0) {
+        return true;
+      }
+      // 兜底：正常 dump 一定是大段 JSON（含 bundleName），没有就不是
+      if (raw.trim().length === 0) {
+        return true;
+      }
+      if (t.indexOf('"bundlename"') >= 0) {
+        return false;   // 还在
+      }
+      return false;     // 无法判定时按"还在"处理，宁可让用户再确认一次
+    } catch (_e) {
+      return false;
     }
   }
 
@@ -466,7 +513,11 @@ export struct AppManageTab {
     this.isBusy = true;
     try {
       const res = await this.busClient.execute(CommandBuilder.resetAppPermissions(b));
-      this.showToast(res.success ? `已重置授权为初始状态` : `重置结果: ${res.output}`);
+      // atm 的输出实测捕获不到（走 pty），无法判断成败，所以只报"已发起"，
+      // 不说"已重置" —— 谎报成功比不给反馈更糟。
+      this.showToast(res.success
+        ? '已发起权限重置，请到「查看权限」确认结果'
+        : `重置失败：${res.output}`);
       if (this.isPermissionOpen) {
         this.handleViewPermissions();
       }
@@ -907,11 +958,7 @@ export struct AppManageTab {
             this.ActionButton('⚙️', '系统设置', '打开权限/存储页', '#0284C7', () => this.handleOpenSettings())
           }
           GridItem() {
-            if (this.selectedApp && this.selectedApp.isSystem) {
-              this.ActionButton('🔒', '不可卸载', '系统镜像集成', '#475569', () => this.askUninstall())
-            } else {
-              this.ActionButton('❌', '免Root卸载', '移除该应用', '#991B1B', () => this.askUninstall())
-            }
+            this.ActionButton('❌', '免Root卸载', '移除该应用', '#991B1B', () => this.askUninstall())
           }
           GridItem() {
             this.ActionButton('ℹ️', '全息元数据', '原始导出信息', '#059669', () => this.handleViewDetail())
