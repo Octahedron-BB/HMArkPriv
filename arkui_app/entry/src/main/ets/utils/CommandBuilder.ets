@@ -28,7 +28,9 @@ export class CommandBuilder {
   static readonly LAYOUT_TMP = '/data/local/tmp/hmpriv/layout_probe.json';
 
   // ===== 屏幕控制 ✅ =====
-  static wakeup(): string { return 'power-shell wakeup'; }
+  // 注意：「唤醒」(power-shell wakeup) 的封装已移除。
+  // 锁屏状态下用户点不到界面上的按钮，这个入口没有实际价值，
+  // 系统本身也提供了电源键唤醒。如需手动唤醒仍可在终端里直接执行该命令。
   static suspend(): string { return 'power-shell suspend'; }
   static setScreenTimeout(ms: number): string {
     return `power-shell timeout -o ${ms}`;

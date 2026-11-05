@@ -515,6 +515,65 @@ MDM Kit 里对应的接口是 `applicationManager.addDisallowedRunningBundlesSyn
 结论：要「像没装一样」只能卸载；要「可逆地废掉它」只能用看门狗冻结。
 
 ### 5. 电池与电源策略深度联动（Battery & Power）
+
+#### 5.0 熄屏时间：读取方式与 override 的关系（2026-11-05 实测）
+
+**为什么要做这个**：原来「系统」Tab 里的「立即唤醒」按钮是无效设计 ——
+锁屏状态下用户根本点不到它。改成显示当前熄屏时间设定，让用户能看到系统真实状态。
+
+**读取方式**：
+
+```typescript
+import { settings } from '@kit.BasicServicesKit';
+const v = settings.getValueSync(context, settings.display.SCREEN_OFF_TIMEOUT, '-1');
+// 实测返回 "60000"，即 1 分钟，与系统设置界面显示一致
+```
+
+- 不需要特殊权限
+- `getValueSync` 在 `settings` **顶层**，不在 `settings.display` 下
+  （`SCREEN_OFF_TIMEOUT` 这个 key 常量才属于 `display` 命名空间）
+- 导入来自 `@kit.BasicServicesKit`，不是 `@kit.ArkData`
+
+**shell 改超时，系统设置里会体现吗？—— 不会**
+
+实测流程：
+1. 系统设置「显示和亮度 ▸ 休眠」显示「1 分钟后」（即 60000ms）
+2. `power-shell timeout -o 150000`（2.5 分钟）
+3. 重新打开设置页 → **仍显示「1 分钟后」**
+
+两者是**完全独立的两层**：
+- 系统设置的「休眠」值存在 settingsdata 里（`SCREEN_OFF_TIMEOUT`）
+- `power-shell timeout -o` 设的是**运行时 override**，不写回设置值
+
+**谁优先？—— override 优先**
+
+实测：用户设置 60 秒，设 `timeout -o 15000`（15 秒）后静置，
+35 秒时屏幕已熄（前台从设置页变成只剩 sceneboard）。
+若用户设置优先则应该 60 秒才熄。
+
+`power-shell timeout -r` 的返回值可判断 override 是否存在（可靠的探测手段）：
+
+| 命令 | 返回值 | 含义 |
+|------|--------|------|
+| `timeout -r` | `Restore screen off time` | **有** override，已清除 |
+| `timeout -r` | `Restore screen off time failed` | **没有** override |
+
+**这是测量「当前是否常亮」的唯一非侵入式手段**，
+`hidumper -s PowerManagerService` 零字段，`param get` 里也没有这个键。
+
+> ⚠️ **测试方法上的坑（记录以免重犯）**：
+> `uitest dumpLayout` **会阻止屏幕熄灭**。之前反复用 dumpLayout 查询状态，
+> 导致「静置 75 秒屏幕还亮」的假象，误以为 override 不生效。
+> 正确做法是静置期间**不发任何命令**，到点后只查一次。
+>
+> 另一个坑：屏幕锁定时前台就是 `com.ohos.sceneboard`，
+> 所以「前台只剩 sceneboard」确实可以代表已熄屏（或已锁定）。
+> 但**必须先让某个应用在前台作标记**，否则无法区分
+> 「屏幕熄了」和「本来就在桌面」。
+
+**产品决策**：界面上如实说明「这是系统设置里的值，App 内临时改超时不影响它」，
+避免用户以为读到的数字就是当前生效值。
+
 - [ ] **硬件级电池状态透视**：
       - 结合系统底层原生接口与 `hidumper`，读取电池真实循环次数、真实健康度、实时充放电毫安电流、电池温度与电压。
 - [ ] **电源模式瞬切卡片**：
@@ -539,7 +598,8 @@ MDM Kit 里对应的接口是 `applicationManager.addDisallowedRunningBundlesSyn
 「系统」Tab 已落地，含「电源与屏幕」和「设备信息」两区：
 
 - [x] 充电时不熄屏开关
-- [x] 立即唤醒 / 立即熄屏
+- [x] **显示当前熄屏时间**（2026-11-05 新增，替代了原来没用的「立即唤醒」）
+- [x] 立即熄屏
 - [x] 电池 / 系统参数 / 内存 / CPU 频率 的查询入口（输出到「最近结果」区）
 - [ ] 电池卡片（把 `@ohos.batteryInfo` 的电量/温度/电压画成卡片，而不是纯文本）
 - [ ] CPU 频率卡片（`hidumper --cpufreq` 输出解析成表格）

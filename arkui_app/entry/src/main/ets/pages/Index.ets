@@ -14,6 +14,7 @@
 import { BusClient } from '../services/BusClient';
 import { BusDirManager } from '../services/BusDirManager';
 import { BatteryReader } from '../services/BatteryReader';
+import { DisplayReader } from '../services/DisplayReader';
 import { TerminalConsole } from '../components/TerminalConsole';
 import { DaemonStatusCard } from '../components/DaemonStatusCard';
 import { OpenApiTab } from '../components/OpenApiTab';
@@ -56,6 +57,8 @@ struct Index {
   @State isCharging: boolean = false;
   /** 充电状态上报定时器 */
   private chargeTimerId: number = -1;
+  /** 当前熄屏时间设定（从系统设置读取） */
+  @State screenTimeoutText: string = '读取中...';
   private busClient: BusClient = new BusClient(DEFAULT_BUS_DIR);
 
   aboutToAppear(): void {
@@ -68,6 +71,12 @@ struct Index {
     this.initBusDir();
   }
 
+  /** 刷新「当前熄屏时间」显示 */
+  refreshScreenTimeout(): void {
+    const ctx = getContext(this) as common.UIAbilityContext;
+    this.screenTimeoutText = DisplayReader.readScreenTimeout(ctx).text;
+  }
+
   aboutToDisappear(): void {
     this.stopChargeReporting();
   }
@@ -75,6 +84,7 @@ struct Index {
   /** 页面可见时开始上报充电状态（切后台就停，靠 daemon 心跳超时兜底） */
   onPageShow(): void {
     this.startChargeReporting();
+    this.refreshScreenTimeout();
   }
 
   onPageHide(): void {
@@ -602,9 +612,10 @@ struct Index {
           .width('100%')
 
         // 屏幕控制
+        // 只保留「熄屏」。「唤醒」已移除 —— 锁屏时用户点不到这个按钮，
+        // 而且系统本身有音量键/电源键可以唤醒，这个入口没有实际价值。
         this.SectionLabel('屏幕控制')
         Flex({ wrap: FlexWrap.Wrap }) {
-          this.QuickBtn('唤醒', CommandBuilder.wakeup())
           this.QuickBtn('熄屏', CommandBuilder.suspend())
         }
         .width('100%')
@@ -882,14 +893,63 @@ struct Index {
           .padding({ left: 4, right: 4 })
           .margin({ bottom: 4 })
 
-        // 屏幕超时
+        // ===== 屏幕 =====
         this.SectionLabel('屏幕')
+
+        // 当前熄屏时间：读系统设置的真实值
+        Row() {
+          Column() {
+            Text('当前熄屏时间')
+              .fontSize(12)
+              .fontColor('#94A3B8')
+            Text(this.screenTimeoutText)
+              .fontSize(15)
+              .fontColor('#E2E8F0')
+              .fontWeight(FontWeight.Medium)
+              .margin({ top: 3 })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Text('刷新')
+            .fontSize(11)
+            .fontColor('#38BDF8')
+            .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+            .backgroundColor('#132A3E')
+            .borderRadius(6)
+            .onClick(() => {
+              this.refreshScreenTimeout();
+              this.lastResult = `已刷新。系统设置中的熄屏时间为：${this.screenTimeoutText}`;
+            })
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+        .backgroundColor('#1A2332')
+        .borderRadius(10)
+        .margin({ bottom: 6 })
+
+        Text('这是系统设置「显示和亮度 ▸ 休眠」里的值。\n' +
+             '在本 App 里用 power-shell 临时改超时不会影响它，两者各自独立。')
+          .fontSize(10)
+          .fontColor('#475569')
+          .lineHeight(15)
+          .width('100%')
+          .padding({ left: 4, right: 4 })
+          .margin({ bottom: 8 })
+
         Flex({ wrap: FlexWrap.Wrap }) {
-          this.QuickBtn('立即唤醒', CommandBuilder.wakeup())
           this.QuickBtn('立即熄屏', CommandBuilder.suspend())
         }
         .width('100%')
-        .margin({ bottom: 12 })
+        .margin({ bottom: 4 })
+
+        Text('「立即唤醒」已移除：锁屏时用户点不到这个按钮，实际无用。')
+          .fontSize(10)
+          .fontColor('#475569')
+          .lineHeight(15)
+          .width('100%')
+          .padding({ left: 4, right: 4 })
+          .margin({ bottom: 12 })
 
         // ===== 设备信息 =====
         this.SectionLabel('设备信息')
