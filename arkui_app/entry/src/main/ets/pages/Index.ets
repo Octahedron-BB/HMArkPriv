@@ -61,6 +61,8 @@ struct Index {
   @State screenOverrideMs: number = 0;
   /** daemon 探测到的屏幕亮灭（on / off / unknown） */
   @State screenRealState: string = 'unknown';
+  /** daemon 从系统日志读到的充电状态（yes / no / unknown） */
+  @State daemonCharging: string = 'unknown';
   /** 上一次已下发的屏幕指令，用于幂等（避免每 3 秒重复发同一条命令） */
   private awakeApplied: string = '';
   /** 充电状态上报定时器 */
@@ -205,6 +207,8 @@ struct Index {
       this.screenOverride = ov === '1';
       this.screenOverrideMs = to ? Number.parseInt(to, 10) : 0;
       this.screenRealState = sc;
+      const ch = get('charging');
+      this.daemonCharging = ch.length > 0 ? ch : 'unknown';
     } catch (e) {
       hilog.warn(0x9201, 'Index', `refreshScreenState: ${(e as Error).message}`);
     }
@@ -983,7 +987,7 @@ struct Index {
             .fontColor('#94A3B8')
           Blank()
           Text(this.screenOverride
-            ? `常亮覆盖中 · 单次 ${Math.round(this.screenOverrideMs / 3600000)} 小时`
+            ? `常亮覆盖中 · 每 5 分钟续期（单次上限 ${Math.round(this.screenOverrideMs / 60000)} 分钟）`
             : '无覆盖 · 使用系统超时')
             .fontSize(11)
             .fontColor(this.screenOverride ? '#F59E0B' : '#64748B')
@@ -1016,9 +1020,31 @@ struct Index {
         .borderRadius(10)
         .margin({ bottom: 8 })
 
+        Row() {
+          Text('充电')
+            .fontSize(11)
+            .fontColor('#94A3B8')
+          Blank()
+          Text(this.daemonCharging === 'yes'
+            ? '已插电'
+            : (this.daemonCharging === 'no' ? '未插电' : '未知'))
+            .fontSize(11)
+            .fontColor(this.daemonCharging === 'yes'
+              ? '#4ADE80'
+              : (this.daemonCharging === 'no' ? '#64748B' : '#475569'))
+          Text(' · daemon 独立检测，App 在后台也生效')
+            .fontSize(10)
+            .fontColor('#475569')
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+        .backgroundColor('#141C28')
+        .borderRadius(10)
+        .margin({ bottom: 8 })
+
         Text(this.stayAwakeWhileCharging
-          ? '由常驻 daemon 执行 power-shell timeout，全局生效：退出 App、切后台都保持。停止 daemon 或重启手机后自动恢复系统设置。'
-          : '开关打开后，插着充电器时屏幕不再自动熄灭。关闭会同时清掉超时覆盖和任何残留的屏幕锁。')
+          ? '由常驻 daemon 执行，全局生效：退出 App、切后台都保持。daemon 自己检测插拔，拔线后约 30 秒内撤销。'
+          : '开关打开后，插着充电器时屏幕不再自动熄灭。daemon 会把超时覆盖设成 10 分钟并每 5 分钟续期，所以即使 daemon 意外退出，最多多亮 10 分钟就自行恢复。')
           .fontSize(10)
           .fontColor('#475569')
           .lineHeight(15)

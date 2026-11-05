@@ -64,50 +64,107 @@ mkdir -p "${BUS_DIR}" 2>/dev/null
 #   ts=<秒级时间戳>
 # ------------------------------------------------------------------------------
 SCREEN_STATE="${BUS_DIR}/screen_state.txt"
-STAY_AWAKE_MS=86400000   # 24 小时：等同"不熄屏"，但仍是一个具体值
-# 屏幕亮灭的"最近已知值"。必须在使用前初始化 —— 启动清理阶段就会调用
-# probe_screen 并写状态文件，若此时变量为空，写进文件的就是空串。
+
+# 【为什么是 10 分钟而不是 24 小时】
+# override 的值是**真实的超时上限**（实测：设 2 分钟 → 静置 150 秒后确实 SLEEP），
+# 而且重复设置会重置空闲计时器（实测：2 分钟的值每 60 秒续一次，连续 4 分钟仍 AWAKE）。
+# 所以只要 daemon 活着，短值 + 定期续期 就能一直保持亮屏；
+# 而一旦 daemon 意外死亡（kill -9、系统回收），屏幕最多多亮这么久就会自愈。
+# 24 小时的值没有这个自愈能力 —— 那正是"幽灵常亮"的来源。
+STAY_AWAKE_MS=600000          # 10 分钟：override 单次上限
+PROBE_INTERVAL=30             # 每 30 秒探测屏幕与充电
+DECIDE_INTERVAL=10            # 每 10 秒决策一次（要不要开/关）
+RENEW_INTERVAL=300            # 每 5 分钟续期一次
+
+# 【为什么用秒数而不是循环计数】
+# 主循环写的是 `sleep 0.05`，但每次迭代还要做文件探测、槽位扫描，
+# 实测一轮远不止 50ms。之前用"计数 × 50ms"推算周期，结果 600 次
+# 换算成 30 秒的探测实际要一分多钟才触发一次。
+# 改用 date +%s 直接比时间，才和真实时间对齐。
+# 为了不给每轮都 fork 一个 date，只在 TICK_GATE 轮里取一次。
+
+# 屏幕亮灭 / 充电状态 的"最近已知值"。必须在启动清理前初始化 ——
+# 那时就会调用 probe_system_state 并写状态文件，空值会写进去。
 SCREEN_LAST_ONOFF="unknown"
+CHARGING_STATE="unknown"
 
 #   $1 = override（0/1）  $2 = timeout 毫秒
 write_screen_state() {
-    printf 'override=%s\ntimeout=%s\nscreen=%s\nts=%s\n' \
-        "$1" "$2" "${SCREEN_LAST_ONOFF:-unknown}" "$(date +%s)" \
-        > "${SCREEN_STATE}" 2>/dev/null
+    printf 'override=%s\ntimeout=%s\nscreen=%s\ncharging=%s\nts=%s\n' \
+        "$1" "$2" "${SCREEN_LAST_ONOFF:-unknown}" "${CHARGING_STATE:-unknown}" \
+        "$(date +%s)" > "${SCREEN_STATE}" 2>/dev/null
 }
 
-# 探测屏幕亮灭。
+# 读回记账值
+read_state_val() {
+    grep -o "$1=[^ ]*" "${SCREEN_STATE}" 2>/dev/null | head -n 1 | sed "s/$1=//"
+}
+
+# ------------------------------------------------------------------------------
+# 一次性探测：屏幕亮灭 + 充电状态
 #
-# 数据源：sceneboard 的 ClockData 日志，约每分钟一行
-#   ClockData: needUpdateLockTime screenOn:true|false, isdoze:...
-# 用最后一行作为"最近的已知状态"。注意最多滞后约 1 分钟，
-# 所以它只适合做界面提示，不适合当作"精确的实时状态"卖点。
-probe_screen() {
+# 只 dump 一次 hilog 到临时文件，再分别 grep —— 比调两次省一半开销
+# （hilog -x 单次约 310ms，全量 9000 行）。
+#
+# 数据源一：屏幕亮灭（sceneboard，约每分钟一行）
+#   ClockData: needUpdateLockTime screenOn:true|false
+#
+# 数据源二：充电状态（powermgr，事件驱动，插拔时才打）
+#   BatteryInfo: capacity=100, ..., pluggedType=2, ...
+#   pluggedType=0 表示未插电。这是 daemon **唯一**能拿到充电状态的途径：
+#   /sys/class/power_supply 被 SELinux 拒绝，hidumper -s BatteryService 的输出
+#   在没有 tty 时只有表头（158 字节）。日志缓冲区实测跨 20 天不滚动，足够可靠。
+# ------------------------------------------------------------------------------
+probe_system_state() {
     # 不用 local：本机 sh 是精简实现，POSIX 不保证 local 可用
-    PROBE_LINE=$(hilog -x 2>/dev/null | grep 'screenOn:' | tail -n 1)
+    PROBE_TMP="${WORK_DIR}/.probe.tmp"
+    hilog -x > "${PROBE_TMP}" 2>/dev/null
+
+    PROBE_LINE=$(grep 'screenOn:' "${PROBE_TMP}" 2>/dev/null | tail -n 1)
     case "${PROBE_LINE}" in
         *'screenOn:true'*)  SCREEN_LAST_ONOFF="on" ;;
         *'screenOn:false'*) SCREEN_LAST_ONOFF="off" ;;
         *)                  SCREEN_LAST_ONOFF="unknown" ;;
     esac
+
+    # 只取最后一条带 capacity 的 BatteryInfo 行，避免误抓 power_host 的同名日志
+    PROBE_PT=$(grep 'BatteryInfo: capacity' "${PROBE_TMP}" 2>/dev/null \
+        | grep -o 'pluggedType=[0-9]*' | tail -n 1)
+    case "${PROBE_PT}" in
+        pluggedType=0) CHARGING_STATE="no" ;;
+        pluggedType=*) CHARGING_STATE="yes" ;;
+        *)             CHARGING_STATE="unknown" ;;
+    esac
+
+    rm -f "${PROBE_TMP}" 2>/dev/null
+}
+
+# 兼容旧名字（启动清理阶段用）
+probe_screen() {
+    probe_system_state
 }
 
 # 开启常亮。
 #
-# 【必须先 -f】`hidumper -s PowerManagerService -a -t`（帮助里写 keep screen on）
-# 会给 powermgr 挂一把永不释放的 PowerMgrKeepOnLock，只有 `-a -f` 能解掉。
-# 我们曾在排查时误执行过一次 -t，结果手机再也无法自动熄屏，且杀 App 无效 ——
-# 这个坑记在 docs/TODO.md 5.0.4。这里先 -f 保证从干净状态起步。
+# 【关于 -f】`hidumper -s PowerManagerService -a -t`（帮助里写 keep screen on）
+# 会给 powermgr 挂一把 PowerMgrKeepOnLock。实测它无 tty 也能上锁，但**释放需要
+# tty**（无 tty 下 -f 连续 3 次都失败）。所以这把锁一旦被误挂，daemon 大概率解不掉。
+# 这里只做 best-effort 清理，真正的保证是"我们从不调用 -t"。
 stay_awake_on() {
     hidumper -s PowerManagerService -a -f >/dev/null 2>&1
     power-shell timeout -o "${STAY_AWAKE_MS}" >/dev/null 2>&1
     write_screen_state "1" "${STAY_AWAKE_MS}"
 }
 
-# 关闭常亮：-r 恢复超时值，-f 再兜一层（清 override + 清任何 keepScreenOn 锁）
+# 只续期，不做 -f（避免每次续期都去碰锁表）
+stay_awake_renew() {
+    power-shell timeout -o "${STAY_AWAKE_MS}" >/dev/null 2>&1
+    write_screen_state "1" "${STAY_AWAKE_MS}"
+}
+
+# 关闭常亮
 stay_awake_off() {
     power-shell timeout -r >/dev/null 2>&1
-    hidumper -s PowerManagerService -a -f >/dev/null 2>&1
     write_screen_state "0" "0"
 }
 
@@ -147,7 +204,10 @@ printf '{"framework":"HMArkPriv","status":"ready","pid":%d,"uid":%d}\n' "$$" "$(
 
 LAST_REQ_ID=""
 FREEZE_CHECK_COUNTER=39
-SCREEN_PROBE_COUNTER=0
+TICK_GATE=0
+LAST_PROBE=0
+LAST_DECIDE=0
+LAST_RENEW=0
 
 # ------------------------------------------------------------------------------
 # 读 config.json 里的值
@@ -291,33 +351,37 @@ run_and_reply() {
     # 也能一眼看出这是内部命令而非用户输入。
     case "${CMD_STR}" in
         __hmpriv_screen_on)
+            # 立刻生效，不等 10 秒决策周期（用户点了开关就该马上有反馈）。
+            # 之后由主循环的决策逻辑接管：拔线或关开关时会自动撤销。
             stay_awake_on
-            probe_screen
+            probe_system_state
             write_screen_state "1" "${STAY_AWAKE_MS}"
             TS=$(date '+%Y-%m-%d %H:%M:%S')
-            printf "ID:%s RC:0 TIME:%s\nOK override=%s screen=%s\n" \
-                "${REQ_ID}" "${TS}" "${STAY_AWAKE_MS}" "${SCREEN_LAST_ONOFF}" > "${OUT_FILE}" 2>/dev/null
+            printf "ID:%s RC:0 TIME:%s\nOK override=%s screen=%s charging=%s\n" \
+                "${REQ_ID}" "${TS}" "${STAY_AWAKE_MS}" "${SCREEN_LAST_ONOFF}" \
+                "${CHARGING_STATE}" > "${OUT_FILE}" 2>/dev/null
             return
             ;;
         __hmpriv_screen_off)
             stay_awake_off
-            probe_screen
+            probe_system_state
             write_screen_state "0" "0"
             TS=$(date '+%Y-%m-%d %H:%M:%S')
-            printf "ID:%s RC:0 TIME:%s\nOK override=0 screen=%s\n" \
-                "${REQ_ID}" "${TS}" "${SCREEN_LAST_ONOFF}" > "${OUT_FILE}" 2>/dev/null
+            printf "ID:%s RC:0 TIME:%s\nOK override=0 screen=%s charging=%s\n" \
+                "${REQ_ID}" "${TS}" "${SCREEN_LAST_ONOFF}" "${CHARGING_STATE}" > "${OUT_FILE}" 2>/dev/null
             return
             ;;
         __hmpriv_screen_status)
-            probe_screen
+            probe_system_state
             TS=$(date '+%Y-%m-%d %H:%M:%S')
             # 读回记账值（App 可能刚重启，状态以文件为准）
-            OV=$(grep -o 'override=[01]' "${SCREEN_STATE}" 2>/dev/null | head -n 1 | sed 's/override=//')
-            TO=$(grep -o 'timeout=[0-9]*' "${SCREEN_STATE}" 2>/dev/null | head -n 1 | sed 's/timeout=//')
+            OV=$(read_state_val override)
+            TO=$(read_state_val timeout)
             [ -z "${OV}" ] && OV=0
             [ -z "${TO}" ] && TO=0
-            printf "ID:%s RC:0 TIME:%s\nOK override=%s timeout=%s screen=%s\n" \
-                "${REQ_ID}" "${TS}" "${OV}" "${TO}" "${SCREEN_LAST_ONOFF}" > "${OUT_FILE}" 2>/dev/null
+            printf "ID:%s RC:0 TIME:%s\nOK override=%s timeout=%s screen=%s charging=%s\n" \
+                "${REQ_ID}" "${TS}" "${OV}" "${TO}" "${SCREEN_LAST_ONOFF}" \
+                "${CHARGING_STATE}" > "${OUT_FILE}" 2>/dev/null
             return
             ;;
     esac
@@ -530,18 +594,73 @@ ${LINE}"
         check_frozen
     fi
 
-    # ---- 屏幕亮灭探测（每约 30 秒一次）----
-    # 为什么是 30 秒：`hilog -x` 单次实测约 310ms，太频繁会明显抬高常驻功耗。
-    # 50ms * 600 = 30s。屏幕状态只用于界面提示，滞后半分钟可以接受。
-    SCREEN_PROBE_COUNTER=$((SCREEN_PROBE_COUNTER + 1))
-    if [ "${SCREEN_PROBE_COUNTER}" -ge 600 ]; then
-        SCREEN_PROBE_COUNTER=0
-        probe_screen
-        OV=$(grep -o 'override=[01]' "${SCREEN_STATE}" 2>/dev/null | head -n 1 | sed 's/override=//')
-        TO=$(grep -o 'timeout=[0-9]*' "${SCREEN_STATE}" 2>/dev/null | head -n 1 | sed 's/timeout=//')
-        [ -z "${OV}" ] && OV=0
-        [ -z "${TO}" ] && TO=0
-        write_screen_state "${OV}" "${TO}"
+    # ---- 定时任务：探测 / 决策 / 续期 ----
+    #
+    # 每 TICK_GATE 轮取一次当前时间，三个定时任务共用这个时间戳。
+    # 这样既保证按真实秒数触发，又不必每轮都 fork date。
+    TICK_GATE=$((TICK_GATE + 1))
+    if [ "${TICK_GATE}" -ge 20 ]; then
+        TICK_GATE=0
+        NOW=$(date +%s)
+
+        # 探测：屏幕亮灭 + 充电状态（一次 hilog dump 拿两个信息）
+        if [ $((NOW - LAST_PROBE)) -ge "${PROBE_INTERVAL}" ]; then
+            LAST_PROBE="${NOW}"
+            probe_system_state
+            OV=$(read_state_val override)
+            TO=$(read_state_val timeout)
+            [ -z "${OV}" ] && OV=0
+            [ -z "${TO}" ] && TO=0
+            write_screen_state "${OV}" "${TO}"
+        fi
+
+        # 决策：开关意图 && 正在充电 → 开；否则 → 关
+        #
+        # 【为什么 daemon 自己决策，而不是听 App 的】
+        # App 的充电轮询在 onPageHide 就停了（实测：切后台后 heartbeat 立刻冻结）。
+        # 如果照着 App 最后一次上报的"正在充电"一直亮，用户拔线后没人通知 daemon，
+        # 屏幕就会一直亮到 override 过期 —— 这正是"幽灵常亮"。
+        # daemon 自己从 BatteryInfo 日志读 pluggedType，就不依赖 App 是否在前台。
+        #
+        # 开关意图仍然来自 App（写进 config.json），这是用户的显式选择。
+        if [ $((NOW - LAST_DECIDE)) -ge "${DECIDE_INTERVAL}" ]; then
+            LAST_DECIDE="${NOW}"
+            TOGGLE=$(cfg_bool stayAwakeWhileCharging)
+            CHG="${CHARGING_STATE}"
+            # hilog 里读不到充电事件时（缓冲区没这行），退回 App 上报的值
+            if [ "${CHG}" = "unknown" ]; then
+                APP_CHG=$(cfg_bool charging)
+                [ "${APP_CHG}" = "true" ] && CHG="yes"
+            fi
+
+            SHOULD="no"
+            if [ "${TOGGLE}" = "true" ] && [ "${CHG}" = "yes" ]; then
+                SHOULD="yes"
+            fi
+
+            OV=$(read_state_val override)
+            [ -z "${OV}" ] && OV=0
+
+            if [ "${SHOULD}" = "yes" ]; then
+                if [ "${OV}" != "1" ]; then
+                    stay_awake_on
+                fi
+            else
+                if [ "${OV}" = "1" ]; then
+                    # 拔线 / 关开关 → 立刻撤销，不等 override 自己过期
+                    stay_awake_off
+                fi
+            fi
+        fi
+
+        # 续期：值 10 分钟、每 5 分钟续一次，只要 daemon 活着就永不过期；
+        # daemon 一死，最多 10 分钟自愈。
+        if [ $((NOW - LAST_RENEW)) -ge "${RENEW_INTERVAL}" ]; then
+            LAST_RENEW="${NOW}"
+            if [ "$(read_state_val override)" = "1" ]; then
+                stay_awake_renew
+            fi
+        fi
     fi
 
     # Low-power sleep (snappy 50ms interval)
