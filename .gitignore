@@ -36,3 +36,5 @@ arkui_app/local.properties
 arkui_app/scripts/verify-result.md
 .tmp/
 core/hmprivd.exe
+# 临时调试目录（hdc 拉回来的控件树/截图）
+.t/
