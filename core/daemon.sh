@@ -31,6 +31,8 @@ RES_DIR="${BUS_DIR}/res"
 AUDIT_LOG="${BUS_DIR}/audit.log"
 TOKENS_FILE="${BUS_DIR}/tokens.txt"
 CONFIG_FILE="${BUS_DIR}/config.json"
+# 看门狗冻结名单：一行一个包名，# 开头为注释
+FROZEN_FILE="${BUS_DIR}/frozen.txt"
 # App 沙箱内的 preferences：存令牌哈希（严格模式的唯一数据源）
 # 实测 shell(uid 2000) 可读；第三方 App 属 app 域，读不到也写不到。
 PREF_FILE="/data/app/el2/100/base/com.octahedron.hmpriv/haps/entry/preferences/hmpriv_trust"
@@ -72,6 +74,7 @@ printf '{"framework":"HMArkPriv","status":"ready","pid":%d,"uid":%d}\n' "$$" "$(
 LAST_REQ_ID=""
 CHARGE_CHECK_COUNTER=55
 IS_KEEPING_AWAKE=0
+FREEZE_CHECK_COUNTER=39
 
 # ------------------------------------------------------------------------------
 # 读 config.json 里的值
@@ -266,6 +269,63 @@ log_audit() {
 }
 
 # ------------------------------------------------------------------------------
+# 看门狗冻结
+#
+# 【设计】
+# 鸿蒙 7.0 消费者版没有 `bm disable`（见 docs/TODO.md §4.1），无法真正停用应用。
+# 这里用"持续强杀"模拟冻结效果：定期扫进程，发现冻结名单里的应用在跑就杀。
+#
+# 【能达成什么】
+#   ✅ 不能后台常驻：任何进程刚起来就被杀
+#   ✅ 手动打开也杀：用户在桌面点开，约 1 秒内被强停（体验上就是"打不开"）
+#   ❌ 包仍在：bm dump 仍能查到，其他应用仍能检测到已安装
+#   ❌ 能被拉起：aa start 会成功，只是活不过 1 秒
+#
+# 【为什么不放进主循环每次都查】
+# ps -ef 单次约 20ms，每次循环（50ms）都跑会占掉 40% CPU。
+# 改成每 20 次循环（约 1 秒）查一次，开销降到约 2%。
+#
+# 【自我保护】
+# 拒绝冻结 com.octahedron.hmpriv 自己 —— 否则 App 会被杀，用户再也点不开
+# 界面来解冻，只能靠电脑 hdc 改文件，等于把自己锁死。
+# ------------------------------------------------------------------------------
+FREEZE_SELF="com.octahedron.hmpriv"
+
+check_frozen() {
+    [ -f "${FROZEN_FILE}" ] || return 0
+    # 【性能】名单为空时零开销 —— 用户不用这个功能就完全不付出代价
+    [ -s "${FROZEN_FILE}" ] || return 0
+
+    # 一次进程快照，避免在名单循环里反复 fork ps。
+    # 实测 ps -ef 本身约 100ms（300+ 进程），是这里的主要成本，
+    # 所以扫描频率定在 2 秒一次（约 5% CPU），而不是 1 秒。
+    #
+    # 末列是进程名；应用子进程形如 "包名:进程名"，用 cut 取冒号前的主包名。
+    # 不做 sort -u：grep -qxF 不要求有序，去重只是浪费一次 fork。
+    RUNNING=$(ps -ef 2>/dev/null | sed 's/.* //' | cut -d: -f1)
+    [ -z "${RUNNING}" ] && return 0
+
+    HIT=0
+    while IFS= read -r PKG; do
+        # 跳过空行、注释、以及自己
+        case "${PKG}" in
+            ''|'#'*) continue ;;
+        esac
+        [ "${PKG}" = "${FREEZE_SELF}" ] && continue
+
+        # -x 整行匹配 + -F 固定字符串：
+        # 保证 com.a 不会误伤 com.a.b（实测 -x 生效）
+        if printf '%s\n' "${RUNNING}" | grep -qxF "${PKG}"; then
+            aa force-stop "${PKG}" >/dev/null 2>&1
+            HIT=$((HIT + 1))
+            log_audit "FREEZE" "0" "force-stop ${PKG}"
+        fi
+    done < "${FROZEN_FILE}"
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
 # 扫描队列目录的槽位，处理已填充的请求（极速总线模式）
 # ------------------------------------------------------------------------------
 process_slots() {
@@ -375,6 +435,16 @@ ${LINE}"
     if [ "${CHARGE_CHECK_COUNTER}" -ge 60 ]; then
         CHARGE_CHECK_COUNTER=0
         check_stay_awake
+    fi
+
+    # ---- 看门狗冻结（每约 2 秒检查一次）----
+    # 为什么是 2 秒而不是 1 秒：ps -ef 单次实测约 100ms，
+    # 1 秒一次要吃掉约 10% CPU，2 秒一次约 5%，对常驻守护进程更合理。
+    # 代价是被冻结的应用启动后最长能活 2 秒（用户感知为"打不开"）。
+    FREEZE_CHECK_COUNTER=$((FREEZE_CHECK_COUNTER + 1))
+    if [ "${FREEZE_CHECK_COUNTER}" -ge 40 ]; then
+        FREEZE_CHECK_COUNTER=0
+        check_frozen
     fi
 
     # Low-power sleep (snappy 50ms interval)

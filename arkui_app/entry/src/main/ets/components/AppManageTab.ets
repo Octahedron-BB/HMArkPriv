@@ -2,6 +2,7 @@ import { BusClient } from '../services/BusClient';
 import { CommandBuilder } from '../utils/CommandBuilder';
 import { ResponseParser, AppItem, PermissionItem } from '../utils/ResponseParser';
 import { CommandResult } from '../model/CommandResult';
+import { FreezeManager } from '../services/FreezeManager';
 import { promptAction } from '@kit.ArkUI';
 
 /**
@@ -59,6 +60,9 @@ export struct AppManageTab {
   @State confirmTitle: string = '';
   @State confirmMessage: string = '';
 
+  // 看门狗冻结：当前冻结名单（包名集合）
+  @State frozenPackages: string[] = [];
+
   aboutToAppear(): void {
     this.loadApps();
   }
@@ -88,6 +92,12 @@ export struct AppManageTab {
     }
     this.isLoading = true;
     try {
+      // 冻结名单是本地文件读取，很快，先刷出来保证 UI 状态正确
+      const busDir = this.busClient.getBusDir();
+      if (busDir) {
+        this.frozenPackages = FreezeManager.getFrozen(busDir);
+      }
+
       const result: CommandResult = await this.busClient.execute(CommandBuilder.listAppsWithLabels());
       if (result.success && result.output.length > 0) {
         this.allApps = ResponseParser.parseAppListWithLabels(result.output);
@@ -233,6 +243,64 @@ export struct AppManageTab {
   /**
    * 强行停止（彻底杀灭进程组）
    */
+  /**
+   * 冻结应用（加入看门狗名单）。
+   *
+   * 鸿蒙没有真正的"停用"能力（见 docs/TODO.md §4.1），这里用持续强杀模拟：
+   * daemon 每约 1 秒扫一次进程，发现目标在跑就 force-stop。
+   * 效果是"打不开、不常驻"，但包仍在、也拦不住被拉起（只是活不过 1 秒）。
+   */
+  async handleFreeze(): Promise<void> {
+    if (!this.selectedApp || this.isBusy) {
+      return;
+    }
+    const b = this.selectedApp.bundleName;
+    const name = this.selectedApp.label;
+    const busDir = this.busClient.getBusDir();
+    if (!busDir) {
+      this.showToast('总线未就绪，请先授权目录');
+      return;
+    }
+
+    const err = FreezeManager.addFrozen(busDir, b);
+    if (err.length > 0) {
+      this.showToast(`冻结失败：${err}`);
+      return;
+    }
+
+    this.frozenPackages = FreezeManager.getFrozen(busDir);
+    // 立刻杀一次，不等 daemon 下一轮（否则用户会觉得"点了没反应"）
+    this.isBusy = true;
+    try {
+      await this.busClient.execute(CommandBuilder.forceStopApp(b));
+      await this.refreshRunningProcesses();
+    } finally {
+      this.isBusy = false;
+    }
+    this.showToast(`已冻结 ${name}：启动会被自动强停`);
+  }
+
+  /** 解冻（移出看门狗名单） */
+  async handleUnfreeze(): Promise<void> {
+    if (!this.selectedApp) {
+      return;
+    }
+    const b = this.selectedApp.bundleName;
+    const name = this.selectedApp.label;
+    const busDir = this.busClient.getBusDir();
+    if (!busDir) {
+      this.showToast('总线未就绪');
+      return;
+    }
+    const err = FreezeManager.removeFrozen(busDir, b);
+    if (err.length > 0) {
+      this.showToast(`解冻失败：${err}`);
+      return;
+    }
+    this.frozenPackages = FreezeManager.getFrozen(busDir);
+    this.showToast(`已解冻 ${name}，可以正常启动`);
+  }
+
   async handleForceStop(): Promise<void> {
     if (!this.selectedApp || this.isBusy) {
       return;
@@ -611,6 +679,23 @@ export struct AppManageTab {
             .margin({ left: 6 })
           }
 
+          // 冻结徽章：比活跃状态更优先显示，让用户一眼看出这应用被冻了
+          if (this.frozenPackages.indexOf(app.bundleName) >= 0) {
+            Row() {
+              Text('❄')
+                .fontSize(9)
+                .fontColor('#7DD3FC')
+                .margin({ right: 3 })
+              Text('已冻结')
+                .fontSize(10)
+                .fontColor('#7DD3FC')
+            }
+            .backgroundColor('#0C4A6E')
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .borderRadius(4)
+            .margin({ left: 6 })
+          }
+
           Text(app.isSystem ? '系统' : '用户')
             .fontSize(10)
             .fontColor(app.isSystem ? '#64748B' : '#38BDF8')
@@ -718,6 +803,13 @@ export struct AppManageTab {
           }
           GridItem() {
             this.ActionButton('🛑', '强行停止', '击毙进程组', '#DC2626', () => this.handleForceStop())
+          }
+          GridItem() {
+            if (this.selectedApp && this.frozenPackages.indexOf(this.selectedApp.bundleName) >= 0) {
+              this.ActionButton('🔥', '解冻应用', '恢复正常运行', '#F59E0B', () => this.handleUnfreeze())
+            } else {
+              this.ActionButton('❄️', '冻结应用', '启动即被强停', '#0EA5E9', () => this.handleFreeze())
+            }
           }
           GridItem() {
             this.ActionButton('🛡️', '查看权限', '标明可修改与状态', '#8B5CF6', () => this.handleViewPermissions())
