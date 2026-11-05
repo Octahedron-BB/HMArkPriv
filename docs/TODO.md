@@ -214,20 +214,86 @@
 - 设置应用自身持有 `ohos.permission.CHANGE_ABILITY_ENABLED_STATE`（这就是它能停用的前提），
   但 shell（UID 2000）没有该权限，也没有对应命令
 
-#### 4.2 EDM（企业设备管理）路线 —— 未验证，大概率不可行
+#### 4.2 EDM（企业设备管理）路线 —— 卡点不在资质审核，而在证书与受限权限
 
-原计划让 App 声明 `EnterpriseAdminExtensionAbility`、通过
-`edm enable-admin` 激活设备管理员，再调用
-`@ohos.enterprise.applicationManager` 的禁用名单 API。
+原计划让 App 声明 `EnterpriseAdminExtensionAbility`、通过 `edm enable-admin`
+激活设备管理员，再调用 `@ohos.enterprise.applicationManager` 的禁用名单 API。
 
-**实测**：`edm enable-admin -n com.octahedron.hmpriv` 静默返回，
-但 `bm dump -n com.octahedron.hmpriv | grep -ic enterprise` = **0**，
-说明**并未真正激活**。原因推测：App 未声明 `EnterpriseAdminExtensionAbility`，
-且消费者版设备通常需要企业 OTA 配置才能成为 Device Owner。
+**实测**（2026-11-05）：
 
-⚠️ 这里以前写着「实测效果：……如同彻底从系统中消失」，那是**未经证实的描述，已删除**。
-若要继续这条路，必须先完成：声明 ExtensionAbility → 验证能否成为 Device Owner
-→ 验证 `addDisallowedList` 在消费者版是否放行。三步都通过才算可行。
+```bash
+# 只给包名
+edm enable-admin -n com.octahedron.hmpriv
+→ error: -a <ability-name> is expected.        # 必须指定扩展能力类名
+
+# 给一个不存在的能力类名
+edm enable-admin -n com.octahedron.hmpriv -a FakeAbility
+→ error: the administrator ability component is invalid.
+  errorCode: 9200003                            # 能力组件不存在，直接拒绝
+```
+
+即：**没有真的 `EnterpriseAdminExtensionAbility` 组件就激活不了**，
+不存在"绕过"的可能。（先前记录写"静默返回"，是因为 shell 里的 `echo RC=$?`
+掩盖了错误输出，实际是报错。已更正。）
+
+**官方要求的资质清单**（查 MDM Kit 开发指南确认）：
+
+| 环节 | 要求 |
+|------|------|
+| 开发者账号 | 必须**注册成为企业开发者**（个人开发者不适用） |
+| 证书 | 申请**MDM 专用证书 + Profile**，普通调试证书无效 |
+| 权限 | MDM 权限属 `system_basic` 级受限 ACL，需 AGC 审核（约 3 个工作日） |
+| 权限声明时机 | 必须在申请证书和 Profile 时一并申请，事后补不了 |
+| 安装位置 | 必须装在首用户（账户 ID 100）下 |
+| 数量限制 | 同一设备只能激活**一个**超级设备管理应用 |
+| 商用 | 还需走「企业 MDM 应用商用申请」 |
+
+**结论**：资质清单看着吓人，但真正致命的是最后一条——
+限制性权限必须随 MDM 证书的 Profile 授予，普通调试证书拿不到。
+（下一节的实测验证了这一点：激活能过，权限过不了。）
+
+#### 4.2.1 亲自实测：组件能加、能激活，但拿不到能力（2026-11-05）
+
+为了确认「只自己用、不分发」能否绕过资质限制，做了一次完整实验：
+临时加上 `EnterpriseAdminExtensionAbility`，构建安装，再尝试激活并调用 API。
+
+**结论：可以激活，但激活是个空壳 —— 没有任何管理能力。**
+
+| 步骤 | 结果 | 证据 |
+|------|------|------|
+| ① SDK 支持 | ✅ | `sdk/default/openharmony/ets/kits/@kit.MDMKit.d.ts` 存在，`EnterpriseAdminExtensionAbility` 可 import |
+| ② 写组件并编译 | ✅ | 继承基类、`module.json5` 加 `"type": "enterpriseAdmin"`，编译通过 |
+| ③ 安装 | ✅ | 组件注册成功，`bm dump` 可见 `extensionTypeName: enterpriseAdmin` |
+| ④ **激活为超级管理员** | ✅ **成功** | `edm enable-admin -n com.octahedron.hmpriv -a EnterpriseAdminAbility -t super` → `enable-admin success.` |
+| ⑤ 回调是否真触发 | ✅ **触发** | 日志：`JsEnterpriseAdminExtension::CallFunction(onAdminEnabled), success` + 自己的 `onAdminEnabled` 日志；进程 `com.octahedron.hmpriv:enterpriseAdmin` 真实存在 |
+| ⑥ **调用管理 API** | ❌ **201 拒绝** | `getDisallowedRunningBundlesSync` → `code=201 Permission verification failed`；`isByodAdmin` 同样 201 |
+| ⑦ 声明所需权限后重装 | ❌ **装不上** | 加 `ohos.permission.ENTERPRISE_MANAGE_APPLICATION` 后安装直接失败：`code:9568289 install failed due to grant request permissions failed` |
+
+**为什么**：`ENTERPRISE_*` 系列权限属于 `system_basic` 级 + 受限 ACL，
+必须在 MDM 专用证书的 Profile 里授权。普通调试证书拿不到，
+所以一声明就安装失败（校验发生在安装期，不是运行期）。
+
+**这意味着**：
+- 「只自己用、不分发」**不能**绕过资质限制 —— 限制来自证书和权限，与分发无关
+- 缺 MDM 证书 → 装不上带权限的包 → 调用 API 必然 201
+- 即使激活成功，也只是「挂了个管理员头衔」，一个管理动作都做不了
+
+**副作用与清理**：`edm enable-admin` 会占用「全机唯一超级管理员」名额。
+实验后已用 `edm disable-admin` 解除，组件代码与 `module.json5` 改动已全部回滚，
+App 功能恢复正常。激活/解除可反复进行，`onAdminDisabled` 回调同样正常触发。
+
+**如果将来想重试**，完整步骤是把上面 ①③④ 重做一遍（约 40 行代码），
+但除非拿到企业 MDM 证书，⑦ 依然是死路。
+
+**再退一步：就算拿到证书，API 效果也存疑**
+
+MDM Kit 里对应的接口是 `applicationManager.addDisallowedRunningBundlesSync`
+（把应用加入「运行黑名单」）。开发者社区有反馈：
+调用返回成功、`getDisallowedRunningBundlesSync` 也能读回名单，
+**目标应用却仍然能正常运行**，该问题未见官方结论。
+
+所以资质只是第一道门，后面还有「API 是否真的拦得住」这个未知数。
+要验证得先有证书，鸡生蛋问题。
 
 #### 4.3 对照用户期望
 
