@@ -57,8 +57,12 @@ struct Index {
   @State isCharging: boolean = false;
   /** 充电状态上报定时器 */
   private chargeTimerId: number = -1;
-  /** 当前熄屏时间设定（从系统设置读取） */
+  /** 当前熄屏时间设定（实际生效值） */
   @State screenTimeoutText: string = '读取中...';
+  /** 这个值的来源说明 */
+  @State screenTimeoutSource: string = '';
+  /** 是否是被 override 覆盖的值 */
+  @State screenTimeoutIsOverride: boolean = false;
   private busClient: BusClient = new BusClient(DEFAULT_BUS_DIR);
 
   aboutToAppear(): void {
@@ -71,10 +75,20 @@ struct Index {
     this.initBusDir();
   }
 
-  /** 刷新「当前熄屏时间」显示 */
+  /**
+   * 刷新「当前熄屏时间」显示。
+   *
+   * 显示的是**实际生效值**，不是系统设置里的静态值：
+   *   有 override（充电常亮 / App 临时设置）→ 显示 override 的值并标注来源
+   *   没有 override → 显示系统设置值
+   */
   refreshScreenTimeout(): void {
     const ctx = getContext(this) as common.UIAbilityContext;
-    this.screenTimeoutText = DisplayReader.readScreenTimeout(ctx).text;
+    const busDir = this.busClient.getBusDir();
+    const info = DisplayReader.readEffectiveTimeout(ctx, busDir ?? '');
+    this.screenTimeoutText = info.text;
+    this.screenTimeoutSource = info.sourceLabel;
+    this.screenTimeoutIsOverride = info.source !== 'system';
   }
 
   aboutToDisappear(): void {
@@ -188,6 +202,10 @@ struct Index {
       this.connecting = false;
       this.stayAwakeWhileCharging = TrustManager.isStayAwakeWhileCharging(dir);
       this.refreshDaemonStatus();
+      // 总线就绪后必须重读一次熄屏时间：
+      // onPageShow 触发时 initBusDir 还没跑完，那时 busClient 用的还是默认路径，
+      // 读不到 screen_state.txt，会误显示成「系统设置」的值。
+      this.refreshScreenTimeout();
       // 清理旧版明文令牌残留（幂等，没有残留时不做任何事）
       TrustManager.purgeLegacyTokens(ctx, dir);
       if (!ok) {
@@ -902,11 +920,22 @@ struct Index {
             Text('当前熄屏时间')
               .fontSize(12)
               .fontColor('#94A3B8')
-            Text(this.screenTimeoutText)
-              .fontSize(15)
-              .fontColor('#E2E8F0')
-              .fontWeight(FontWeight.Medium)
-              .margin({ top: 3 })
+            Row() {
+              Text(this.screenTimeoutText)
+                .fontSize(15)
+                .fontColor(this.screenTimeoutIsOverride ? '#FBBF24' : '#E2E8F0')
+                .fontWeight(FontWeight.Medium)
+              if (this.screenTimeoutSource.length > 0) {
+                Text(this.screenTimeoutSource)
+                  .fontSize(10)
+                  .fontColor(this.screenTimeoutIsOverride ? '#FBBF24' : '#64748B')
+                  .backgroundColor(this.screenTimeoutIsOverride ? '#2A2415' : '#1E293B')
+                  .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                  .borderRadius(4)
+                  .margin({ left: 8 })
+              }
+            }
+            .margin({ top: 3 })
           }
           .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
@@ -919,7 +948,7 @@ struct Index {
             .borderRadius(6)
             .onClick(() => {
               this.refreshScreenTimeout();
-              this.lastResult = `已刷新。系统设置中的熄屏时间为：${this.screenTimeoutText}`;
+              this.lastResult = `已刷新。当前实际生效的熄屏时间：${this.screenTimeoutText}（${this.screenTimeoutSource}）`;
             })
         }
         .width('100%')
@@ -928,8 +957,8 @@ struct Index {
         .borderRadius(10)
         .margin({ bottom: 6 })
 
-        Text('这是系统设置「显示和亮度 ▸ 休眠」里的值。\n' +
-             '在本 App 里用 power-shell 临时改超时不会影响它，两者各自独立。')
+        Text('显示的是当前实际生效的值。亮黄色表示已被临时覆盖（如充电常亮），\n' +
+             '灰色表示就是系统设置「显示和亮度 ▸ 休眠」里的值。')
           .fontSize(10)
           .fontColor('#475569')
           .lineHeight(15)

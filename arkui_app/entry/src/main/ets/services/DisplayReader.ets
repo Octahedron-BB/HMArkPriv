@@ -21,6 +21,7 @@ import { settings } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { fileIo } from '@kit.CoreFileKit';
 
 const DOMAIN = 0x9201;
 const TAG = 'DisplayReader';
@@ -33,6 +34,10 @@ export interface ScreenTimeoutInfo {
   text: string;
   /** 是否读取成功 */
   ok: boolean;
+  /** 这个值来自哪里 */
+  source: 'system' | 'app' | 'charging';
+  /** 来源的中文说明，直接给界面用 */
+  sourceLabel: string;
 }
 
 /** 常见的熄屏时间档位（毫秒），用于把数值说得更像系统设置的口径 */
@@ -41,13 +46,127 @@ const COMMON_STEPS: number[] = [
   600000, 1800000, 3600000, 6000000,
 ];
 
+/** override 记录的读取结果 */
+interface OverrideRecord {
+  rawMs: number;
+  source: 'app' | 'charging' | 'system';
+}
+
+/** 状态文件名（与 daemon 共用） */
+const STATE_FILE = 'screen_state.txt';
+
 export class DisplayReader {
   /**
-   * 读取系统设置的熄屏时间。
+   * 读取「当前实际生效」的熄屏时间。
+   *
+   * 【两层来源】
+   *   1. 总线目录的 screen_state.txt —— 记录当前是否有 override 及其值
+   *      （daemon 的充电常亮、App 手动设置，都会写这个文件）
+   *   2. 系统设置的 SCREEN_OFF_TIMEOUT —— 用户设的静态值
+   *
+   * 优先级：有 override 记录 → 用 override 值；否则用系统设置值。
+   * 这样界面显示的就是「现在到底多久熄屏」，而不是一个静态设置。
    *
    * @param context UIAbilityContext
+   * @param busDir  总线目录（读 override 记录用），为空则只看系统设置
    */
-  static readScreenTimeout(context: common.UIAbilityContext): ScreenTimeoutInfo {
+  static readEffectiveTimeout(
+    context: common.UIAbilityContext,
+    busDir: string,
+  ): ScreenTimeoutInfo {
+    // 1. 先看有没有 override 记录
+    if (busDir && busDir.length > 0) {
+      const ov = DisplayReader.readOverride(busDir);
+      if (ov !== null && ov.rawMs > 0 && ov.source !== 'system') {
+        return {
+          rawMs: ov.rawMs,
+          text: DisplayReader.formatMs(ov.rawMs),
+          ok: true,
+          source: ov.source,
+          sourceLabel: ov.source === 'charging' ? '充电常亮（本 App 维持）' : '本 App 临时设置',
+        };
+      }
+    }
+
+    // 2. 没有 override，用系统设置值
+    const sys = DisplayReader.readSystemTimeout(context);
+    return {
+      rawMs: sys.rawMs,
+      text: sys.text,
+      ok: sys.ok,
+      source: 'system',
+      sourceLabel: '系统设置',
+    };
+  }
+
+  /**
+   * 读 override 记录。
+   * @returns null 表示没有记录或记录显示无 override
+   */
+  private static readOverride(busDir: string): OverrideRecord | null {
+    try {
+      const p = `${busDir}/${STATE_FILE}`;
+      if (!fileIo.accessSync(p)) {
+        return null;
+      }
+      const text = fileIo.readTextSync(p);
+      if (!text || text.length === 0) {
+        return null;
+      }
+      let source = 'system';
+      let ms = 0;
+      const lines = text.split('\n');
+      for (const raw of lines) {
+        const line = raw.trim();
+        if (line.startsWith('source=')) {
+          source = line.substring(7).trim();
+        } else if (line.startsWith('timeout=')) {
+          ms = parseInt(line.substring(8).trim(), 10);
+        }
+      }
+      if (isNaN(ms)) {
+        ms = 0;
+      }
+      const src = (source === 'charging' || source === 'app') ? source : 'system';
+      const rec: OverrideRecord = {
+        rawMs: ms,
+        source: src as 'app' | 'charging' | 'system',
+      };
+      return rec;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  /**
+   * 写入 override 记录（App 手动设置超时后调用）。
+   * daemon 也会在充电常亮时写这个文件。
+   */
+  static writeOverride(busDir: string, source: 'app' | 'system', ms: number): boolean {
+    try {
+      const p = `${busDir}/${STATE_FILE}`;
+      if (!fileIo.accessSync(p)) {
+        hilog.warn(DOMAIN, TAG, `${STATE_FILE} missing, cannot record override`);
+        return false;
+      }
+      const content = `source=${source}\ntimeout=${ms}\n`;
+      const f = fileIo.openSync(p, 0o2 | 0o1000);
+      try {
+        fileIo.writeSync(f.fd, content);
+        fileIo.fsyncSync(f.fd);
+      } finally {
+        fileIo.closeSync(f);
+      }
+      return true;
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, TAG, `writeOverride failed: ${e.code}`);
+      return false;
+    }
+  }
+
+  /** 只读系统设置值（原有逻辑） */
+  static readSystemTimeout(context: common.UIAbilityContext): ScreenTimeoutInfo {
     try {
       // 默认值给 '-1' 以便区分「读到 0」和「读失败」
       // 注意：getValueSync 在 settings 顶层，不在 settings.display 下；
@@ -60,17 +179,16 @@ export class DisplayReader {
       const ms = parseInt(v, 10);
       if (isNaN(ms) || ms < 0) {
         hilog.warn(DOMAIN, TAG, `readScreenTimeout got invalid value: "${v}"`);
-        return { rawMs: -1, text: '读取失败', ok: false };
+        return { rawMs: -1, text: '读取失败', ok: false, source: 'system', sourceLabel: '系统设置' };
       }
       if (ms === 0) {
-        // 部分 ROM 用 0 或超大值表示「永不」
-        return { rawMs: 0, text: '永不熄屏', ok: true };
+        return { rawMs: 0, text: '永不熄屏', ok: true, source: 'system', sourceLabel: '系统设置' };
       }
-      return { rawMs: ms, text: DisplayReader.formatMs(ms), ok: true };
+      return { rawMs: ms, text: DisplayReader.formatMs(ms), ok: true, source: 'system', sourceLabel: '系统设置' };
     } catch (err) {
       const e = err as BusinessError;
       hilog.error(DOMAIN, TAG, `readScreenTimeout failed: code=${e.code} msg=${e.message}`);
-      return { rawMs: -1, text: `读取失败（${e.code}）`, ok: false };
+      return { rawMs: -1, text: `读取失败（${e.code}）`, ok: false, source: 'system', sourceLabel: '系统设置' };
     }
   }
 

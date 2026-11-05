@@ -74,6 +74,7 @@ h file send empty.bin "$BUS/audit.log" >/dev/null 2>&1 || true
 h file send empty.bin "$BUS/tokens.txt" >/dev/null 2>&1 || true
 # 看门狗冻结名单（一行一个包名，# 开头为注释）
 h file send empty.bin "$BUS/frozen.txt" >/dev/null 2>&1 || true
+h file send empty.bin "$BUS/screen_state.txt" >/dev/null 2>&1 || true
 echo '{"queueEnabled":true}' > "$TMPD/config.json"
 h file send "$TMPD/config.json" "$BUS/config.json" >/dev/null 2>&1 || true
 

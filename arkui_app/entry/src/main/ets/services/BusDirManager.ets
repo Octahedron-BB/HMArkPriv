@@ -222,7 +222,7 @@ export class BusDirManager {
       hilog.warn(DOMAIN, TAG, `mkdir bus dir failed: code=${e.code} msg=${e.message}`);
     }
 
-    const files: string[] = ['cmd.req', 'cmd.res', 'status.json', 'frozen.txt'];
+    const files: string[] = ['cmd.req', 'cmd.res', 'status.json', 'frozen.txt', 'screen_state.txt'];
     for (const f of files) {
       const p = `${dir}/${f}`;
       try {

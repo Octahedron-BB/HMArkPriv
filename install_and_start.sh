@@ -53,7 +53,7 @@ echo "[2/4] Pre-allocating Shared Bus in $REMOTE_BUS ..."
 mkdir -p "$STAGE_DIR/HMArkPriv"
 "$HDC" -t "$TARGET" file send "$STAGE_DIR/HMArkPriv" "/storage/media/100/local/files/Docs/Download/" >/dev/null 2>&1 || true
 
-for f in cmd.req cmd.res status.json audit.log tokens.txt config.json frozen.txt; do
+for f in cmd.req cmd.res status.json audit.log tokens.txt config.json frozen.txt screen_state.txt; do
     touch "$STAGE_DIR/$f"
     "$HDC" -t "$TARGET" file send "$STAGE_DIR/$f" "$REMOTE_BUS/$f" >/dev/null
 done

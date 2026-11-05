@@ -43,9 +43,37 @@ CMD_TIMEOUT_KILL=5
 mkdir -p "${WORK_DIR}" 2>/dev/null
 mkdir -p "${BUS_DIR}" 2>/dev/null
 
+# ------------------------------------------------------------------------------
+# 记录「当前实际生效的熄屏超时」
+#
+# 【为什么需要记录】
+# 系统设置里的 SCREEN_OFF_TIMEOUT 只是「用户设置的静态值」，
+# 而 power-shell timeout -o 设的是运行时 override，两者互不影响。
+# 想知道「现在到底多久熄屏」，必须知道 override 是否存在、值多少。
+#
+# 可惜没有任何接口能读回 override 的值（hidumper 全零字段、param 里也没有），
+# 唯一能探测「是否存在」的手段是 `timeout -r`，但它会顺带清除 —— 不能用来纯查询。
+#
+# 所以只能自己记账：谁设的 override，就在这个文件里写下来。
+# 前提假设：只有本 App 和 daemon 会设 override（合理，因为都需要 shell 权限）。
+#
+# 格式（两行，daemon 用 printf 就能写，App 用 split 就能读）：
+#   source=charging|app|system
+#   timeout=<毫秒>
+# ------------------------------------------------------------------------------
+SCREEN_STATE="${BUS_DIR}/screen_state.txt"
+
+#   $1 = source（charging / app / system）
+#   $2 = timeout 毫秒（system 传 0）
+write_screen_state() {
+    [ -f "${SCREEN_STATE}" ] || return 0
+    printf 'source=%s\ntimeout=%s\n' "$1" "$2" > "${SCREEN_STATE}" 2>/dev/null
+}
+
 # 状态恢复与清理
 cleanup() {
     power-shell timeout -r >/dev/null 2>&1
+    write_screen_state "system" "0"
     rm -f "${PID_FILE}" 2>/dev/null
     exit 0
 }
@@ -55,6 +83,7 @@ trap cleanup INT TERM
 # 上一次 daemon 若被 kill -9 杀掉，trap 不会执行，可能残留 24 小时常亮。
 # 这里做一次幂等清理，保证从干净状态开始 —— 这是"幽灵常亮"的根治手段。
 power-shell timeout -r >/dev/null 2>&1
+write_screen_state "system" "0"
 
 # Single instance enforcement
 if [ -f "${PID_FILE}" ]; then
@@ -128,9 +157,11 @@ check_stay_awake() {
     if [ "${SHOULD_AWAKE}" -eq 1 ] && [ "${IS_KEEPING_AWAKE}" -eq 0 ]; then
         power-shell timeout -o 86400000 >/dev/null 2>&1
         IS_KEEPING_AWAKE=1
+        write_screen_state "charging" "86400000"
     elif [ "${SHOULD_AWAKE}" -eq 0 ] && [ "${IS_KEEPING_AWAKE}" -eq 1 ]; then
         power-shell timeout -r >/dev/null 2>&1
         IS_KEEPING_AWAKE=0
+        write_screen_state "system" "0"
     fi
 }
 

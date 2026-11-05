@@ -534,6 +534,46 @@ const v = settings.getValueSync(context, settings.display.SCREEN_OFF_TIMEOUT, '-
   （`SCREEN_OFF_TIMEOUT` 这个 key 常量才属于 `display` 命名空间）
 - 导入来自 `@kit.BasicServicesKit`，不是 `@kit.ArkData`
 
+**但只显示这个值没有意义** —— 用户自己去系统设置就能看到。
+真正有用的是「**当前实际生效值**」（override 可能覆盖了它）。
+所以最终的实现是两层：
+
+| 情况 | 显示 | 颜色 |
+|------|------|------|
+| 有 override（充电常亮 / App 临时设置） | override 的值 + 来源标签 | 亮黄 `#FBBF24` |
+| 无 override | 系统设置值 + 「系统设置」 | 灰 `#E2E8F0` |
+
+实测效果：
+- 充电常亮生效时 → 显示「24 小时」+「充电常亮（本 App 维持）」
+- 关掉开关后 → 显示「1 分」+「系统设置」
+
+**override 值是怎么记录的**（关键设计）
+
+没有任何接口能读回 override 的值：`hidumper -s PowerManagerService` 零字段、
+`param get` 里也没有；唯一能探测「是否存在」的 `timeout -r` 会顺带清除，不能纯查询。
+
+所以只能自己记账 —— 总线目录新增 `screen_state.txt`：
+
+```
+source=charging|app|system
+timeout=<毫秒>
+```
+
+- daemon 设置充电常亮时写 `source=charging timeout=86400000`
+- daemon 恢复时写 `source=system timeout=0`
+- daemon 启动清理时也写 `system`（防止上次 kill -9 留下脏记录）
+- App 手动设置超时时写 `source=app`
+
+前提假设：只有本 App 和 daemon 会设 override（合理，因为都需要 shell 权限）。
+如果是外部工具设的 override，我们无从知晓具体值 —— 这个局限已知。
+
+**踩到的一个时序坑**：`onPageShow` 触发时 `initBusDir` 还没跑完，
+那时 `busClient.getBusDir()` 返回的还是 `DEFAULT_BUS_DIR`（daemon 的绝对路径），
+读不到 `screen_state.txt`，会误显示成「系统设置」的值。
+（实测日志时间差仅 33ms：`readEffective: busDir="/storage/media/100/..."` 在前，
+`busDir set to: /storage/Users/currentUser/...` 在后。）
+修复：总线就绪后**再次**调用 `refreshScreenTimeout()`。
+
 **shell 改超时，系统设置里会体现吗？—— 不会**
 
 实测流程：
@@ -571,8 +611,38 @@ const v = settings.getValueSync(context, settings.display.SCREEN_OFF_TIMEOUT, '-
 > 但**必须先让某个应用在前台作标记**，否则无法区分
 > 「屏幕熄了」和「本来就在桌面」。
 
-**产品决策**：界面上如实说明「这是系统设置里的值，App 内临时改超时不影响它」，
-避免用户以为读到的数字就是当前生效值。
+**产品决策**：显示「实际生效值」而不是「系统设置的静态值」。
+用户自己去系统设置就能看到静态值，界面上再显示一遍没有意义；
+有用的是「现在到底多久熄屏」（可能已被 override 覆盖）。
+有 override 时用亮黄色标出并注明来源，让用户一眼看出「这不是系统设置的原值」。
+
+#### 5.0.1 意外收获：runningLock 可能是充电常亮的更好实现（待验证）
+
+查资料时发现 `@ohos.runningLock`，它对应 Android 的 wakelock 思路 ——
+**加临时锁**而不是**改超时值**，正好能解决现在这套方案的三个痼疾
+（污染用户设置、要负责还原、还原失败就成幽灵常亮）。
+
+**实测结论**：
+
+| 项目 | 结果 |
+|------|------|
+| `ohos.permission.RUNNING_LOCK` 等级 | `availableLevel: normal` + `system_grant`，**不是受限 ACL**，普通应用可声明 |
+| 声明后能否安装 | ✅ 可以（对比 MDM 权限会 9568289 装不上） |
+| `RunningLockType.BACKGROUND_USER_IDLE` | ❌ `isSupported() = false`（本设备不支持，API 23+ 才有） |
+| `RunningLockType.BACKGROUND` | ✅ `isSupported() = true`，`acquire()` 返回 true |
+
+`BACKGROUND` 的语义是「屏幕关闭后系统不进入休眠」，`BACKGROUND_USER_IDLE` 才是
+「用户空闲时不自动休眠」——后者更贴合「充电时不熄屏」，可惜本机不支持。
+
+**未能验证 **：`acquire()` 成功之后是否真的阻止了熄屏。
+原因是测试环境本身就不熄屏：设备在充电、且「注视屏幕不熄屏」可能开着，
+对照组（不持锁）静置 80 秒也不熄，导致「是否熄屏」这个判据不可用。
+
+要验证得换个环境：拔掉充电线 → 确认静置会熄屏 → 再持锁重测。
+
+**如果验证通过，充电常亮应该改用这个方案**：不再动 `power-shell timeout`，
+`hold()` 期间不熄屏，`unhold()` 立即恢复用户原本设置，没有残留风险。
+目前代码里没有采用，等验证。
 
 - [ ] **硬件级电池状态透视**：
       - 结合系统底层原生接口与 `hidumper`，读取电池真实循环次数、真实健康度、实时充放电毫安电流、电池温度与电压。
