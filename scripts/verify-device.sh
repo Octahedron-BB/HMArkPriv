@@ -2,7 +2,7 @@
 # ==============================================================================
 # 真机验证脚本 — 通过文件总线（与 App 完全相同的链路）
 #
-# 与 arkui-app/scripts/verify-all.sh 的区别：
+# 与 arkui_app/scripts/verify-all.sh 的区别：
 #   - 目标设备是真机 Pura 70 Pro+（toybox 裁剪更严重，无 tr/awk）
 #   - 只验证真机能跑的命令，避开已知会卡死 daemon 的 hidumper -c
 #   - 每条命令后检查 daemon 存活，异常立即停止

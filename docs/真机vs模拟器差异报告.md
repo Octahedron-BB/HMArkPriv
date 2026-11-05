@@ -3,7 +3,7 @@
 > 真机：Pura 70 Pro+ / HBN-AL80 / HarmonyOS 7.0.0.109(SP8C00E105R4P2) / API 26 / arm64-v8a
 > 模拟器：Mate 70 Pro+ / HarmonyOS 7.0.0.107 / API 26 / x86_64
 > 验证链路：文件总线（cmd.req / cmd.res），与 App 完全相同
-> 逐条明细：[`真机指令验证明细.md`](真机指令验证明细.md)
+> 逐条明细：运行 [`scripts/verify-device.sh`](../scripts/verify-device.sh) 重新生成
 > 日期：2026-11-04
 
 ---

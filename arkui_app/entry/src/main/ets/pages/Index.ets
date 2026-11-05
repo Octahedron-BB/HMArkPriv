@@ -51,7 +51,11 @@ struct Index {
   /** 是否为极速总线模式令牌申请 */
   @State isTokenRequest: boolean = false;
   /** 充电防熄屏开关 */
-  @State stayAwakeWhileCharging: boolean = true;
+  @State stayAwakeWhileCharging: boolean = false;
+  /** 当前是否在充电（用于开关行的副标题提示） */
+  @State isCharging: boolean = false;
+  /** 充电状态上报定时器 */
+  private chargeTimerId: number = -1;
   private busClient: BusClient = new BusClient(DEFAULT_BUS_DIR);
 
   aboutToAppear(): void {
@@ -62,6 +66,51 @@ struct Index {
     // 兜底：如果监听注册前就已有 pending，主动读一次
     this.syncPending();
     this.initBusDir();
+  }
+
+  aboutToDisappear(): void {
+    this.stopChargeReporting();
+  }
+
+  /** 页面可见时开始上报充电状态（切后台就停，靠 daemon 心跳超时兜底） */
+  onPageShow(): void {
+    this.startChargeReporting();
+  }
+
+  onPageHide(): void {
+    this.stopChargeReporting();
+  }
+
+  /**
+   * 开始上报充电状态。
+   *
+   * daemon 读不到充电状态（hilog 里没有 pluggedType，/sys 被 SELinux 拒绝），
+   * 只能由 App 用 @ohos.batteryInfo 读出来写进 config.json。
+   * 每 3 秒一次，同时刷新 heartbeat，让 daemon 知道 App 还活着。
+   */
+  startChargeReporting(): void {
+    this.stopChargeReporting();
+    this.tickCharge();
+    this.chargeTimerId = setInterval(() => {
+      this.tickCharge();
+    }, 3000);
+  }
+
+  stopChargeReporting(): void {
+    if (this.chargeTimerId >= 0) {
+      clearInterval(this.chargeTimerId);
+      this.chargeTimerId = -1;
+    }
+  }
+
+  tickCharge(): void {
+    const dir = this.busClient.getBusDir();
+    if (!dir || this.needAuth) {
+      return;
+    }
+    const snap = BatteryReader.read();
+    this.isCharging = snap.charging;
+    TrustManager.reportCharging(snap.charging, dir);
   }
 
   /**
@@ -265,20 +314,32 @@ struct Index {
     this.isExecuting = false;
   }
 
+  /**
+   * 切换「充电时不熄屏」。
+   *
+   * 旧实现用 hilog 抓 pluggedType 判断充电状态 —— 实测该字段在鸿蒙 hilog 里
+   * 恒不存在，所以开了也不生效、关了也可能残留 24 小时常亮。
+   *
+   * 现在：开关只写配置，充电状态由 tickCharge() 定时上报，
+   * daemon 读 config 幂等切换。这里额外做一次立即同步，避免等 3 秒。
+   */
   async toggleStayAwakeWhileCharging(isOn: boolean): Promise<void> {
     this.stayAwakeWhileCharging = isOn;
     const busDir = this.busClient.getBusDir();
     TrustManager.setStayAwakeWhileCharging(isOn, busDir);
+
     if (!isOn) {
+      // 关闭时立刻恢复，不等 daemon 下一轮（用户明确的要求：关了就该不亮）
       await this.busClient.execute('power-shell timeout -r');
       this.lastResult = '已关闭「充电时不熄屏」：已恢复系统默认熄屏超时。';
-    } else {
-      await this.busClient.execute(
-        'CURRENT_PLUG=$(hilog -x -T BatteryInfo 2>/dev/null | grep -o "pluggedType=[0-9]" | tail -n 1 | cut -d= -f2); ' +
-        'if [ -n "$CURRENT_PLUG" ] && [ "$CURRENT_PLUG" != "0" ]; then power-shell timeout -o 86400000; fi'
-      );
-      this.lastResult = '已开启「充电时不熄屏」：充电时自动保持常亮，拔出充电器后自动恢复。';
+      return;
     }
+
+    // 开启时先上报一次当前充电状态，daemon 下一轮就会切换到常亮
+    this.tickCharge();
+    this.lastResult = this.isCharging
+      ? '已开启「充电时不熄屏」：当前正在充电，已切换为常亮。拔出充电器后自动恢复。'
+      : '已开启「充电时不熄屏」：当前未充电，插入充电器后自动保持常亮。';
   }
 
   /** 电池：走原生 API（hidumper -s BatteryService 实测拿不到数据） */
@@ -558,9 +619,13 @@ struct Index {
                 .fontSize(13)
                 .fontColor('#E2E8F0')
                 .fontWeight(FontWeight.Medium)
-              Text(this.stayAwakeWhileCharging ? '已开启（插电长亮，拔电恢复）' : '已关闭（遵循系统熄屏设置）')
+              Text(this.stayAwakeWhileCharging
+                ? (this.isCharging ? '已开启 · 正在充电，保持常亮' : '已开启 · 未充电，插电后生效')
+                : '已关闭（遵循系统熄屏设置）')
                 .fontSize(10)
-                .fontColor(this.stayAwakeWhileCharging ? '#38BDF8' : '#64748B')
+                .fontColor(this.stayAwakeWhileCharging
+                  ? (this.isCharging ? '#4ADE80' : '#38BDF8')
+                  : '#64748B')
                 .margin({ top: 2 })
             }
             .alignItems(HorizontalAlign.Start)

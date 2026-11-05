@@ -46,6 +46,11 @@ cleanup() {
 }
 trap cleanup INT TERM
 
+# 【重要】启动时先无条件恢复一次系统熄屏超时。
+# 上一次 daemon 若被 kill -9 杀掉，trap 不会执行，可能残留 24 小时常亮。
+# 这里做一次幂等清理，保证从干净状态开始 —— 这是"幽灵常亮"的根治手段。
+power-shell timeout -r >/dev/null 2>&1
+
 # Single instance enforcement
 if [ -f "${PID_FILE}" ]; then
     OLD_PID=$(cat "${PID_FILE}" 2>/dev/null)
@@ -64,6 +69,64 @@ printf '{"framework":"HMArkPriv","status":"ready","pid":%d,"uid":%d}\n' "$$" "$(
 LAST_REQ_ID=""
 CHARGE_CHECK_COUNTER=55
 IS_KEEPING_AWAKE=0
+
+# ------------------------------------------------------------------------------
+# 读 config.json 里的值
+#
+# 设备上没有 jq / awk，用 grep + sed 提取扁平 JSON 的单个字段。
+#   $1 = 键名
+# 布尔返回 true / false；数字返回数字串；取不到返回空串。
+# ------------------------------------------------------------------------------
+cfg_bool() {
+    grep -o "\"$1\":[a-z]*" "${CONFIG_FILE}" 2>/dev/null | head -n 1 | sed 's/.*://'
+}
+cfg_num() {
+    grep -o "\"$1\":[0-9]*" "${CONFIG_FILE}" 2>/dev/null | head -n 1 | sed 's/.*://'
+}
+
+# ------------------------------------------------------------------------------
+# 充电防熄屏
+#
+# 【为什么不用 hilog 判断充电状态】
+# 实测真机 `hilog -x -T BatteryInfo | grep pluggedType` 恒为空字符串 ——
+# 鸿蒙根本不往 hilog 打 pluggedType 字段，所以旧实现永远判定"未充电"。
+# /sys/class/power_supply 也被 SELinux 拒绝（Permission denied）。
+#
+# 【现在的做法】
+# 充电状态由 App 用 @ohos.batteryInfo 读取后写进 config.json：
+#   stayAwakeWhileCharging : 用户的开关
+#   charging               : 当前是否在充电
+#   heartbeat              : App 最后一次更新的时间戳（秒）
+# daemon 只负责按这三个值做幂等切换，不做任何猜测。
+#
+# 心跳超过 60 秒视为 App 已不在前台，不再维持常亮 —— 避免 App 被杀后
+# 状态卡死导致"一直亮"。
+# ------------------------------------------------------------------------------
+check_stay_awake() {
+    STAY_CONF=$(cfg_bool "stayAwakeWhileCharging")
+    CHARGING=$(cfg_bool "charging")
+    HEARTBEAT=$(cfg_num "heartbeat")
+
+    NOW=$(date +%s)
+    STALE=1
+    if [ -n "${HEARTBEAT}" ] && [ "${HEARTBEAT}" -gt 0 ]; then
+        AGE=$((NOW - HEARTBEAT))
+        [ "${AGE}" -le 60 ] && STALE=0
+    fi
+
+    SHOULD_AWAKE=0
+    if [ "${STAY_CONF}" = "true" ] && [ "${CHARGING}" = "true" ] && [ "${STALE}" -eq 0 ]; then
+        SHOULD_AWAKE=1
+    fi
+
+    if [ "${SHOULD_AWAKE}" -eq 1 ] && [ "${IS_KEEPING_AWAKE}" -eq 0 ]; then
+        power-shell timeout -o 86400000 >/dev/null 2>&1
+        IS_KEEPING_AWAKE=1
+    elif [ "${SHOULD_AWAKE}" -eq 0 ] && [ "${IS_KEEPING_AWAKE}" -eq 1 ]; then
+        power-shell timeout -r >/dev/null 2>&1
+        IS_KEEPING_AWAKE=0
+    fi
+}
 
 # ------------------------------------------------------------------------------
 # 执行一条命令并写结果
@@ -212,25 +275,11 @@ ${LINE}"
     # ---- 协议 2：队列槽位（跨应用调用）----
     process_slots
 
-    # ---- 自动维护：充电防熄屏（充电时保持常亮，未充电或开关关闭时恢复正常熄屏）----
+    # ---- 自动维护：充电防熄屏（每约 3 秒检查一次）----
     CHARGE_CHECK_COUNTER=$((CHARGE_CHECK_COUNTER + 1))
     if [ "${CHARGE_CHECK_COUNTER}" -ge 60 ]; then
         CHARGE_CHECK_COUNTER=0
-        AWAKE_CONF_DISABLED=0
-        if grep -q '"stayAwakeWhileCharging":false' "${CONFIG_FILE}" 2>/dev/null; then
-            AWAKE_CONF_DISABLED=1
-        fi
-
-        CURRENT_PLUG=$(hilog -x -T BatteryInfo 2>/dev/null | grep -o 'pluggedType=[0-9]' | tail -n 1 | cut -d= -f2)
-        if [ "${AWAKE_CONF_DISABLED}" -eq 0 ] && [ -n "${CURRENT_PLUG}" ] && [ "${CURRENT_PLUG}" != "0" ]; then
-            power-shell timeout -o 86400000 >/dev/null 2>&1
-            IS_KEEPING_AWAKE=1
-        else
-            if [ "${IS_KEEPING_AWAKE}" -eq 1 ]; then
-                power-shell timeout -r >/dev/null 2>&1
-                IS_KEEPING_AWAKE=0
-            fi
-        fi
+        check_stay_awake
     fi
 
     # Low-power sleep (snappy 50ms interval)

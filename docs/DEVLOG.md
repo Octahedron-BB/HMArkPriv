@@ -25,7 +25,7 @@
 3. 传统 Shizuku 与李跳跳（依赖 Android 无障碍服务）在纯血鸿蒙上失效。
 
 ### 1.2 解决过程
-- 下载并提取 OpenHarmony 7.0 Release 官方 macOS ARM64 Command Line Tools 中的 [`hdc`](file:///Users/octahedronbb/Downloads/Pura%2070/toolchains/hdc) (`Ver: 3.2.0f`)。
+- 下载并提取 OpenHarmony 7.0 Release 官方 macOS ARM64 Command Line Tools 中的 `hdc` (`Ver: 3.2.0f`)。用法见 [HarmonyOS-Shell-指令全集.md](HarmonyOS-Shell-指令全集.md) 第 12 章。
 - 验证 USB HDC (`33Z0224430072393`) 与无线 HDC (`hdc tconn 192.168.1.9:45463`) 双通道连接成功，确认 HarmonyOS 7.0 的无线调试无需配对码，直接基于首次 USB RSA 密钥信任或同局域网 `hdc tconn` 直连。
 
 ---
@@ -44,7 +44,7 @@
     - `/data/local/tmp/kingkongDir` (`u:object_r:kingkong_data_exec:s0`)
   - 将二进制放入上述目录并尝试 `execve()`，同样被拦截。
 - **根因结论**：HarmonyOS 7.0 内核启用了 **XPM (Executable Permission Manager)** 与严格的 SELinux `execute` 域校验，`u:r:sh:s0` 域**仅被允许 `execve()` 位于只读 `/system/bin/` 分区下具有华为官方 IMA/fs-verity 签名的约 185 个系统二进制文件**。
-- **架构决策**：放弃编译外部 C/Rust 二进制，改为编写由 `/system/bin/sh` 解释执行的 POSIX Shell 守护进程 [`hshizuku_daemon.sh`](file:///Users/octahedronbb/Downloads/Pura%2070/H-Shizuku/src/hshizuku_daemon.sh)，内部组合调用 `/system/bin/` 原生签名工具。
+- **架构决策**：放弃编译外部 C/Rust 二进制，改为编写由 `/system/bin/sh` 解释执行的 POSIX Shell 守护进程 [`daemon.sh`](../core/daemon.sh)，内部组合调用 `/system/bin/` 原生签名工具。
 
 ### 2.2 尝试 2：在 `u:r:sh:s0` 中监听本地 TCP 端口或创建命名管道（失败 ❌）
 - **操作**：
@@ -101,7 +101,7 @@
 
 ## 阶段五：实机部署与端到端验证
 
-在连接的 HUAWEI Pura 70 Pro+ (`33Z0224430072393`) 上执行 [`install_and_start.sh`](file:///Users/octahedronbb/Downloads/Pura%2070/H-Shizuku/install_and_start.sh) 并进行跨沙盒 RPC 实测，输出如下：
+在连接的 HUAWEI Pura 70 Pro+ (`33Z0224430072393`) 上执行 [`install_and_start.sh`](../install_and_start.sh) 并进行跨沙盒 RPC 实测，输出如下：
 
 ```text
 ✅ H-Shizuku Daemon started! Verifying live status & RPC bus...

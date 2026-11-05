@@ -337,40 +337,71 @@ export class TrustManager {
     }
   }
 
-  /** 读取充电防熄屏开关（默认开启） */
+  /** 读取充电防熄屏开关（默认关闭 —— 用户不主动开就不该常亮） */
   static isStayAwakeWhileCharging(busDir: string = APP_BUS_DIR): boolean {
     const path = `${busDir}/${BUS_FILE_CONFIG}`;
     try {
       if (fileIo.accessSync(path)) {
         const text = fileIo.readTextSync(path);
         const cfg = JSON.parse(text) as Record<string, Object>;
-        return cfg['stayAwakeWhileCharging'] !== false;
+        return cfg['stayAwakeWhileCharging'] === true;
       }
     } catch (err) {
-      // 默认开启
+      // 默认关闭
     }
-    return true;
+    return false;
   }
 
   /** 设置充电防熄屏开关 */
   static setStayAwakeWhileCharging(enabled: boolean, busDir: string = APP_BUS_DIR): void {
+    TrustManager.patchConfig({ 'stayAwakeWhileCharging': enabled }, busDir);
+  }
+
+  /**
+   * 上报当前充电状态与心跳时间戳。
+   *
+   * daemon 是 shell 脚本，拿不到 @ohos.batteryInfo，只能用 hilog，
+   * 而实测 hilog 里根本没有 pluggedType 字段（恒为空）。
+   * 所以充电状态必须由 App 写入 config.json，daemon 只读不算。
+   *
+   * heartbeat 用于让 daemon 判断 App 是否还活着：超过 60 秒没更新
+   * 就不再维持常亮，避免 App 被杀后状态卡死成"一直亮"。
+   */
+  static reportCharging(charging: boolean, busDir: string = APP_BUS_DIR): void {
+    TrustManager.patchConfig({
+      'charging': charging,
+      'heartbeat': Math.floor(Date.now() / 1000),
+    }, busDir);
+  }
+
+  /** 合并写 config.json（保留其它键），读-改-写 带 fsync */
+  private static patchConfig(patch: Record<string, Object>, busDir: string = APP_BUS_DIR): void {
     const path = `${busDir}/${BUS_FILE_CONFIG}`;
     try {
       let cfg: Record<string, Object> = {};
       if (fileIo.accessSync(path)) {
         try {
-          cfg = JSON.parse(fileIo.readTextSync(path)) as Record<string, Object>;
-        } catch (_) {}
+          const text = fileIo.readTextSync(path);
+          if (text.trim().length > 0) {
+            cfg = JSON.parse(text) as Record<string, Object>;
+          }
+        } catch (_) {
+          // 文件损坏就重建
+        }
       }
-      cfg['stayAwakeWhileCharging'] = enabled;
-      const json = JSON.stringify(cfg);
+      const keys = Object.keys(patch);
+      for (const k of keys) {
+        cfg[k] = patch[k];
+      }
       const f = fileIo.openSync(path, 0o2 | 0o1000);
-      fileIo.writeSync(f.fd, json);
-      fileIo.fsyncSync(f.fd);
-      fileIo.closeSync(f);
-      hilog.info(DOMAIN, TAG, `setStayAwakeWhileCharging: ${enabled}`);
+      try {
+        fileIo.writeSync(f.fd, JSON.stringify(cfg));
+        fileIo.fsyncSync(f.fd);
+      } finally {
+        fileIo.closeSync(f);
+      }
     } catch (err) {
-      hilog.warn(DOMAIN, TAG, `setStayAwakeWhileCharging failed: ${err}`);
+      hilog.warn(DOMAIN, TAG, `patchConfig failed: ${err}`);
     }
   }
 
