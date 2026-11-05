@@ -1,12 +1,12 @@
 /**
- * HMArkPriv 主页面 — Phase 1 MVP
+ * HMArkPriv 主页面
  *
- * 底部 Tab 导航：
+ * 底部 Tab 导航（5 个）：
  * - 首页：快捷操作面板 + daemon 状态
  * - 终端：Shell 终端控制台（核心功能）
- * - 应用：应用管理（Phase 3 占位）
- * - 触控：触控模拟（Phase 4 占位）
- * - 系统：系统信息（Phase 5 占位）
+ * - 应用：应用管理（Phase 3 已实装）
+ * - 开放：跨应用调用（白名单 / 极速总线令牌 / 审计日志）
+ * - 系统：电源与屏幕（充电时不熄屏）+ 设备信息
  *
  * 验收标准：在终端 Tab 输入 `id`，看到 `uid=2000(shell)` 输出。
  */
@@ -524,9 +524,9 @@ struct Index {
         }
         .tabBar(this.TabItem('开放', 3))
 
-        // Tab 5: 系统信息（Phase 5 占位）
+        // Tab 5: 系统
         TabContent() {
-          this.PlaceholderTab('系统信息', 'Phase 5 开发中')
+          this.SystemTab()
         }
         .tabBar(this.TabItem('系统', 4))
       }
@@ -608,42 +608,6 @@ struct Index {
         .width('100%')
         .margin({ bottom: 8 })
 
-        // 充电时不熄屏开关
-        Row() {
-          Row() {
-            Text('⚡')
-              .fontSize(14)
-              .margin({ right: 6 })
-            Column() {
-              Text('充电时不熄屏')
-                .fontSize(13)
-                .fontColor('#E2E8F0')
-                .fontWeight(FontWeight.Medium)
-              Text(this.stayAwakeWhileCharging
-                ? (this.isCharging ? '已开启 · 正在充电，保持常亮' : '已开启 · 未充电，插电后生效')
-                : '已关闭（遵循系统熄屏设置）')
-                .fontSize(10)
-                .fontColor(this.stayAwakeWhileCharging
-                  ? (this.isCharging ? '#4ADE80' : '#38BDF8')
-                  : '#64748B')
-                .margin({ top: 2 })
-            }
-            .alignItems(HorizontalAlign.Start)
-          }
-          .layoutWeight(1)
-
-          Toggle({ type: ToggleType.Switch, isOn: this.stayAwakeWhileCharging })
-            .selectedColor('#38BDF8')
-            .onChange((isOn: boolean) => {
-              this.toggleStayAwakeWhileCharging(isOn);
-            })
-        }
-        .width('100%')
-        .padding({ left: 12, right: 12, top: 10, bottom: 10 })
-        .backgroundColor('#1A2332')
-        .borderRadius(10)
-        .margin({ bottom: 12 })
-
         // 按键模拟
         this.SectionLabel('按键模拟')
         Flex({ wrap: FlexWrap.Wrap }) {
@@ -656,13 +620,11 @@ struct Index {
         .width('100%')
         .margin({ bottom: 8 })
 
-        // 系统信息
-        this.SectionLabel('系统信息')
+        // 应用信息（电池/系统参数等已移到「系统」Tab，避免重复）
+        this.SectionLabel('应用信息')
         Flex({ wrap: FlexWrap.Wrap }) {
-          this.QuickBtn('电池', '')
           this.QuickBtn('应用列表', '')
           this.QuickBtn('前台应用', '')
-          this.QuickBtn('系统参数', '')
         }
         .width('100%')
         .margin({ bottom: 8 })
@@ -860,22 +822,122 @@ struct Index {
     .shadow({ radius: 24, color: '#000000DD', offsetX: 0, offsetY: 8 })
   }
 
+  /**
+   * 系统 Tab：电源与屏幕、设备信息。
+   *
+   * 「充电时不熄屏」放在这里而不是首页 —— 它属于系统级电源策略，
+   * 不是高频快捷操作。
+   */
   @Builder
-  PlaceholderTab(title: string, subtitle: string) {
-    Column() {
-      Text(title)
-        .fontSize(18)
-        .fontColor('#64748B')
-        .fontWeight(FontWeight.Bold)
+  SystemTab() {
+    Scroll() {
+      Column() {
+        // ===== 电源与屏幕 =====
+        this.SectionLabel('电源与屏幕')
 
-      Text(subtitle)
-        .fontSize(13)
-        .fontColor('#475569')
-        .margin({ top: 8 })
+        Row() {
+          Row() {
+            Text('⚡')
+              .fontSize(16)
+              .margin({ right: 8 })
+            Column() {
+              Text('充电时不熄屏')
+                .fontSize(13)
+                .fontColor('#E2E8F0')
+                .fontWeight(FontWeight.Medium)
+              Text(this.stayAwakeWhileCharging
+                ? (this.isCharging ? '已开启 · 正在充电，保持常亮' : '已开启 · 未充电，插电后生效')
+                : '已关闭（遵循系统熄屏设置）')
+                .fontSize(10)
+                .fontColor(this.stayAwakeWhileCharging
+                  ? (this.isCharging ? '#4ADE80' : '#38BDF8')
+                  : '#64748B')
+                .margin({ top: 2 })
+            }
+            .alignItems(HorizontalAlign.Start)
+          }
+          .layoutWeight(1)
+
+          Toggle({ type: ToggleType.Switch, isOn: this.stayAwakeWhileCharging })
+            .selectedColor('#38BDF8')
+            .onChange((isOn: boolean) => {
+              this.toggleStayAwakeWhileCharging(isOn);
+            })
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+        .backgroundColor('#1A2332')
+        .borderRadius(10)
+        .margin({ bottom: 8 })
+
+        Text(this.stayAwakeWhileCharging
+          ? '插上充电器后屏幕不自动熄灭。App 退到后台超过 60 秒会自动停止维持（系统不允许常驻）。'
+          : '鸿蒙开发者选项里已移除「充电时不锁屏」，此开关是本项目的替代实现。')
+          .fontSize(10)
+          .fontColor('#475569')
+          .lineHeight(15)
+          .width('100%')
+          .padding({ left: 4, right: 4 })
+          .margin({ bottom: 4 })
+
+        // 屏幕超时
+        this.SectionLabel('屏幕')
+        Flex({ wrap: FlexWrap.Wrap }) {
+          this.QuickBtn('立即唤醒', CommandBuilder.wakeup())
+          this.QuickBtn('立即熄屏', CommandBuilder.suspend())
+        }
+        .width('100%')
+        .margin({ bottom: 12 })
+
+        // ===== 设备信息 =====
+        this.SectionLabel('设备信息')
+        Flex({ wrap: FlexWrap.Wrap }) {
+          this.QuickBtn('电池', '')
+          this.QuickBtn('系统参数', '')
+          this.QuickBtn('内存', 'hidumper --mem | head -20')
+          this.QuickBtn('CPU 频率', 'hidumper --cpufreq')
+        }
+        .width('100%')
+        .margin({ bottom: 12 })
+
+        // 最近一次读取结果
+        if (this.lastResult) {
+          Column() {
+            Row() {
+              Text('最近结果')
+                .fontSize(11)
+                .fontColor('#94A3B8')
+                .layoutWeight(1)
+              Text('清空')
+                .fontSize(11)
+                .fontColor('#64748B')
+                .onClick(() => {
+                  this.lastResult = '';
+                })
+            }
+            .width('100%')
+            .margin({ bottom: 6 })
+
+            Text(this.lastResult)
+              .fontSize(11)
+              .fontColor('#C3E88D')
+              .fontFamily('JetBrains Mono, Consolas, monospace')
+              .lineHeight(17)
+              .width('100%')
+          }
+          .width('100%')
+          .padding(10)
+          .backgroundColor('#1A2332')
+          .borderRadius(8)
+          .alignItems(HorizontalAlign.Start)
+        }
+      }
+      .width('100%')
+      .padding(12)
     }
     .width('100%')
     .height('100%')
-    .justifyContent(FlexAlign.Center)
+    .scrollBar(BarState.Auto)
   }
 
   @Builder
