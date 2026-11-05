@@ -76,9 +76,8 @@ PROBE_INTERVAL=30             # 每 30 秒探测屏幕与充电
 DECIDE_INTERVAL=10            # 每 10 秒决策一次（要不要开/关）
 RENEW_INTERVAL=300            # 每 5 分钟续期一次
 # App 切后台后心跳会冻结。此时允许"沿用最后一次已知的插电状态"多久。
-# 用户明确表示：拔线后短暂残留可以接受，只要不会一直残留。
-# 30 分钟 + override 自身 10 分钟过期，即 App 后台化后最多 40 分钟必定自愈。
-CHG_GRACE=1800
+# 设为 90 秒（约 3 轮探测周期）：避免切后台瞬间误熄屏，同时确保拔线后最迟 90 秒必定自愈。
+CHG_GRACE=90
 
 # 【为什么用秒数而不是循环计数】
 # 主循环写的是 `sleep 0.05`，但每次迭代还要做文件探测、槽位扫描，
@@ -144,39 +143,21 @@ read_state_val() {
 #   在没有 tty 时只有表头（158 字节）。日志缓冲区实测跨 20 天不滚动，足够可靠。
 # ------------------------------------------------------------------------------
 probe_system_state() {
-    # 不用 local：本机 sh 是精简实现，POSIX 不保证 local 可用
-    PROBE_TMP="${WORK_DIR}/.probe.tmp"
-    hilog -x > "${PROBE_TMP}" 2>/dev/null
-
-    # ---- 1) 屏幕亮灭（sceneboard，约每分钟一行）----
-    PROBE_LINE=$(grep 'screenOn:' "${PROBE_TMP}" 2>/dev/null | tail -n 1)
+    # ---- 1) 屏幕亮灭（sceneboard，过滤 screenOn）----
+    PROBE_LINE=$(hilog -x -e 'screenOn:' 2>/dev/null | tail -n 1)
     case "${PROBE_LINE}" in
         *'screenOn:true'*)  SCREEN_LAST_ONOFF="on" ;;
         *'screenOn:false'*) SCREEN_LAST_ONOFF="off" ;;
     esac
 
-    # ---- 2) 充电状态（powermgr/BatteryInfo）----
-    #
-    # 【这里推翻过两次结论，最终实测数据如下】
-    # malformed 的观察：有时候在缓冲区里一行都找不到，于是以为"日志不可靠"。
-    # 真相是：这行**每 30 秒就会打印一次**（实测连续采样 6 次，间隔稳定 30s），
-    # 但环形缓冲区只有 2~5 分钟且会被刷屏日志挤掉 —— 找不到只是那一刻被冲了。
-    #
-    # 关键推论：daemon 每 30 秒轮询一次，而日志每 30 秒写一行、缓冲区能留 ≥2 分钟，
-    # 所以「轮询时几乎总能捞到一行」，而且捞到的必然是 2 分钟内的新值。
-    # 这就让 daemon 能独立判断插拔，不再依赖 App 是否在前台 —— 残留窗口随之消失。
-    #
-    # 取不到就置 unknown：让判定链自然降级到 App 心跳 / 宽限期，
-    # 而不是把一个可能过期的 yes 一直当成事实。
-    PROBE_PT=$(grep 'BatteryInfo: capacity' "${PROBE_TMP}" 2>/dev/null \
-        | grep -o 'pluggedType=[0-9]*' | tail -n 1)
+    # ---- 2) 充电状态（powermgr/BatteryInfo，精准正则过滤，避免全量 dump 闪存磨损与缓冲区冲刷）----
+    PROBE_PT=$(hilog -x -e 'capacity' 2>/dev/null \
+        | grep 'BatteryInfo: capacity' | grep -o 'pluggedType=[0-9]*' | tail -n 1)
     case "${PROBE_PT}" in
         pluggedType=0) LOG_CHG="no" ;;
         pluggedType=*) LOG_CHG="yes" ;;
         *)             LOG_CHG="unknown" ;;
     esac
-
-    rm -f "${PROBE_TMP}" 2>/dev/null
 }
 
 # 兼容旧名字（启动清理阶段用）
@@ -224,6 +205,8 @@ trap cleanup INT TERM
 # `timeout -r` 对它无效（详见 docs/TODO.md 5.0.4）。
 power-shell timeout -r >/dev/null 2>&1
 hidumper -s PowerManagerService -a -f >/dev/null 2>&1
+# 扩大 core 日志缓冲区到 4MB，防止环境光/传感器日志冲刷 powermgr 事件
+hilog -G 4M -t core >/dev/null 2>&1 || true
 # 【不继承充电状态】只继承"屏幕亮灭"这种无副作用的显示用值。
 # 充电状态一律由决策循环从 App 心跳重新判断：
 # 继承一个旧值（哪怕是 5 分钟前的 charging=yes）都可能让 daemon 误以为在充电，
@@ -447,8 +430,10 @@ run_and_reply() {
     OUT_TMP="${WORK_DIR}/.cmdout.tmp"
     : > "${OUT_TMP}" 2>/dev/null
 
+    # 注意：必须用 `(${CMD_STR}) | cat` 管道，不能直接把 stdout 重定向到普通文件。
+    # 鸿蒙 `bm dump` 会检查 stdout 的 fstat，若为普通文件会直接返回 0 字节，管道才能正常捕获。
     timeout -k "${CMD_TIMEOUT_KILL}" "${CMD_TIMEOUT_TERM}" \
-        sh -c "${CMD_STR}" > "${OUT_TMP}" 2>&1 < /dev/null &
+        sh -c "(${CMD_STR}) | cat" > "${OUT_TMP}" 2>&1 < /dev/null &
     CMD_PID=$!
 
     # 轮询粒度 100ms，上限 CMD_WAIT_SECS（比 timeout 的 20+5 再宽 5 秒，
@@ -777,6 +762,15 @@ ${LINE}"
             if [ "${SHOULD}" = "yes" ]; then
                 if [ "${OV}" != "1" ]; then
                     stay_awake_on
+                    WROTE=1
+                else
+                    # 关键修复：当处于插电常亮状态时，系统在息屏后唤醒（按电源键/敲击/插拔）时，
+                    # 锁屏服务（sceneboard/powermgr）会强制写入 OverrideTimeout=10000ms（10秒锁屏短超时）。
+                    # 如果 daemon 仅在 OV!=1 时才设置，就会误以为 override 依然有效，
+                    # 导致唤醒 10 秒后依然被系统强制熄屏。
+                    # 因此在 SHOULD=yes 期间，每轮决策都补一次 stay_awake_renew，
+                    # 压制锁屏服务的 10 秒短超时，确保唤醒后永不熄屏。
+                    stay_awake_renew
                     WROTE=1
                 fi
             else
