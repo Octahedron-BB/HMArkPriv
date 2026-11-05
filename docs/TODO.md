@@ -179,8 +179,59 @@
       - 调用 `bm clean -c -n <bundleName>`。
 - [x] **免 Root 卸载应用**：
       - 调用 `bm uninstall -n <bundleName> -u 100`，带二次确认弹窗。
+      - ⚠️ **只对第三方应用有效**，系统应用会失败，详见 §3.1。
 - [x] **全息元数据导出**：
       - 原始代码容器查看 `bm dump -n` 完整数据。
+
+#### 3.1 为什么系统应用卸载不了（实测，2026-11-05）
+
+用户实测卸载「未成年人模式」（`com.huawei.hmos.minorsprotection`）失败，排查结论：
+
+```bash
+bm uninstall -n com.huawei.hmos.minorsprotection -u 100
+→ code:9568380
+  error: uninstall system app error.
+```
+
+**根因是 `appDistributionType`，不是 `isRemovable`**：
+
+| 字段 | 值 | 说明 |
+|------|-----|------|
+| `appDistributionType` | **`os_integration`** | **系统镜像集成**，这是拒绝卸载的真正原因 |
+| `userInfo.isRemovable` | `true` | 这个字段虽然为 true，但不起决定作用 |
+| `appProvisionType` | `release` | 正式发布包 |
+
+对照第三方应用：`nansheng.software.nextzhongduan` 是 `app_gallery`，可正常卸载。
+
+**`os_integration` 的含义**：应用打包在系统镜像里，不是通过安装器装进去的。
+BMS 认为这类包属于系统本身，删除它等于破坏系统完整性，因此一律拒绝。
+
+**试过的所有变体都失败**：
+
+| 命令 | 结果 |
+|------|------|
+| `bm uninstall -n <pkg> -u 100` | 9568380 |
+| `bm uninstall -n <pkg> -k -u 100`（保留数据） | 9568380 |
+| `bm uninstall -n <pkg>`（不指定用户） | 9568380 |
+| `bm uninstall -n <pkg> -u 0` | 304 user does not install the hap |
+| `strings /system/bin/bm` 查隐藏参数 | 无强制卸载选项 |
+
+**但系统应用在别的操作上是放行的**（这是重要的能力边界）：
+
+| 操作 | 系统应用 | 结果 |
+|------|---------|------|
+| `bm clean -d`（清数据） | ✅ | clean bundle data files successfully |
+| `bm clean -c`（清缓存） | ✅ | clean bundle cache files successfully |
+| `aa force-stop`（强停） | ✅ | force stop process successfully |
+| 看门狗冻结 | ✅ | 生效（该应用平时本就不常驻，需先手动启动才能观察到） |
+| `bm uninstall`（卸载） | ❌ | 9568380 |
+
+**结论与产品建议**：
+
+- 系统应用的「卸载」按钮应当**置灰或提前拦截**，不要让用户点了才看到失败
+- 判断依据用 `appDistributionType == "os_integration"`，比 `isRemovable` 准
+- 想"废掉"系统应用，**冻结才是可行路径**（本项目的看门狗冻结对系统应用有效）
+- 「未成年人模式」这类应用平时不常驻，冻结的实际意义是"防止它被意外拉起"
 
 ### 4. 冻结 / 冷宫（Freeze · 看门狗方案已实装）
 

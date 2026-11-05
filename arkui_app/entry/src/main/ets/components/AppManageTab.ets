@@ -167,12 +167,18 @@ export struct AppManageTab {
 
     for (let i = 0; i < this.allApps.length; i++) {
       const app = this.allApps[i];
-      // 分类筛选
-      if (this.currentCategory === 1 && app.isSystem) {
-        continue;
-      }
-      if (this.currentCategory === 2 && !app.isSystem) {
-        continue;
+      // 分类筛选：3 = 只看已冻结
+      if (this.currentCategory === 3) {
+        if (this.frozenPackages.indexOf(app.bundleName) < 0) {
+          continue;
+        }
+      } else {
+        if (this.currentCategory === 1 && app.isSystem) {
+          continue;
+        }
+        if (this.currentCategory === 2 && !app.isSystem) {
+          continue;
+        }
       }
       // 关键字搜索
       if (key.length > 0) {
@@ -269,6 +275,8 @@ export struct AppManageTab {
     }
 
     this.frozenPackages = FreezeManager.getFrozen(busDir);
+    // 在「已冻结」视图下冻结新应用时，需要重新过滤才能看到它进入列表
+    this.applyFilter();
     // 立刻杀一次，不等 daemon 下一轮（否则用户会觉得"点了没反应"）
     this.isBusy = true;
     try {
@@ -298,7 +306,30 @@ export struct AppManageTab {
       return;
     }
     this.frozenPackages = FreezeManager.getFrozen(busDir);
+    // 解冻后该应用应从「已冻结」视图消失
+    this.applyFilter();
     this.showToast(`已解冻 ${name}，可以正常启动`);
+  }
+
+  /** 解冻全部（清空冻结名单） */
+  async handleUnfreezeAll(): Promise<void> {
+    const busDir = this.busClient.getBusDir();
+    if (!busDir) {
+      this.showToast('总线未就绪');
+      return;
+    }
+    const before = this.frozenPackages.length;
+    if (before === 0) {
+      return;
+    }
+    const err = FreezeManager.clearAll(busDir);
+    if (err.length > 0) {
+      this.showToast(`解冻失败：${err}`);
+      return;
+    }
+    this.frozenPackages = FreezeManager.getFrozen(busDir);
+    this.applyFilter();
+    this.showToast(`已解冻全部 ${before} 个应用`);
   }
 
   async handleForceStop(): Promise<void> {
@@ -374,6 +405,16 @@ export struct AppManageTab {
    */
   askUninstall(): void {
     if (!this.selectedApp) {
+      return;
+    }
+    // 系统镜像集成应用（appDistributionType = os_integration）无法卸载。
+    // 实测 bm uninstall 一律返回 9568380 "uninstall system app error"，
+    // 且没有任何命令行变体能绕过。提前拦下来，省得用户点了才看到失败。
+    if (this.selectedApp.isSystem) {
+      this.showToast(
+        `「${this.selectedApp.label}」是系统镜像集成应用，无法卸载。\n` +
+        `如不希望它运行，可以用「冻结应用」代替。`
+      );
       return;
     }
     this.confirmActionType = 'uninstall';
@@ -540,14 +581,35 @@ export struct AppManageTab {
         .width('100%')
         .padding({ left: 16, right: 16, top: 10, bottom: 8 })
 
-        // ===== 分类芯片：全部 / 第三方 / 系统预装 =====
+        // ===== 分类芯片：全部 / 第三方 / 系统预装 / 已冻结 =====
         Row() {
           this.FilterChip('全部', 0)
           this.FilterChip('用户应用', 1)
           this.FilterChip('系统预装', 2)
+          this.FilterChip('已冻结', 3)
         }
         .width('100%')
         .padding({ left: 16, right: 16, bottom: 8 })
+
+        // ===== 已冻结视图的汇总条 =====
+        if (this.currentCategory === 3 && this.frozenPackages.length > 0) {
+          Row() {
+            Text(`共 ${this.frozenPackages.length} 个应用被冻结`)
+              .fontSize(11)
+              .fontColor('#7DD3FC')
+              .layoutWeight(1)
+            Text('全部解冻')
+              .fontSize(11)
+              .fontColor('#F87171')
+              .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+              .onClick(() => this.handleUnfreezeAll())
+          }
+          .width('100%')
+          .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+          .backgroundColor('#0C2A3E')
+          .borderRadius(8)
+          .margin({ left: 16, right: 16, bottom: 8 })
+        }
 
         // ===== 应用列表区 =====
         if (this.isLoading && this.allApps.length === 0) {
@@ -566,9 +628,20 @@ export struct AppManageTab {
           .justifyContent(FlexAlign.Center)
         } else if (this.displayApps.length === 0) {
           Column() {
-            Text('未找到匹配的应用')
+            Text(this.currentCategory === 3 ? '❄' : '🔍')
+              .fontSize(34)
+              .margin({ bottom: 10 })
+            Text(this.currentCategory === 3
+              ? '还没有冻结任何应用'
+              : '未找到匹配的应用')
               .fontSize(14)
               .fontColor('#64748B')
+            if (this.currentCategory === 3) {
+              Text('在任意应用的「管控 >」面板里点「冻结应用」')
+                .fontSize(11)
+                .fontColor('#475569')
+                .margin({ top: 6 })
+            }
           }
           .width('100%')
           .layoutWeight(1)
@@ -616,21 +689,31 @@ export struct AppManageTab {
 
   /**
    * 分类芯片组件
+   *
+   * 注意：标题必须内联在 Text 里算，不能把动态计数当参数传给 @Builder ——
+   * @Builder 参数按值传递，首次构建后不随 @State 重建（令牌计数曾踩过这个坑）。
+   * 这里 catIndex 是常量，所以按索引分支是安全的。
    */
   @Builder
   FilterChip(title: string, catIndex: number) {
     Row() {
       Text(catIndex === 0 ? `全部 (${this.allAppsCount})`
-        : (catIndex === 1 ? `用户应用 (${this.userAppsCount})` : `系统预装 (${this.systemAppsCount})`))
+        : (catIndex === 1 ? `用户应用 (${this.userAppsCount})`
+        : (catIndex === 2 ? `系统预装 (${this.systemAppsCount})`
+        : `已冻结 (${this.frozenPackages.length})`)))
         .fontSize(12)
-        .fontColor(this.currentCategory === catIndex ? '#090D16' : '#94A3B8')
+        .fontColor(this.currentCategory === catIndex
+          ? (catIndex === 3 ? '#090D16' : '#090D16')
+          : (catIndex === 3 ? '#7DD3FC' : '#94A3B8'))
         .fontWeight(this.currentCategory === catIndex ? FontWeight.Bold : FontWeight.Normal)
     }
     .height(28)
     .padding({ left: 10, right: 10 })
     .margin({ right: 8 })
     .borderRadius(14)
-    .backgroundColor(this.currentCategory === catIndex ? '#38BDF8' : '#1E293B')
+    .backgroundColor(this.currentCategory === catIndex
+      ? (catIndex === 3 ? '#7DD3FC' : '#38BDF8')
+      : (catIndex === 3 ? '#0C4A6E' : '#1E293B'))
     .onClick(() => {
       this.currentCategory = catIndex;
       this.applyFilter();
@@ -824,7 +907,11 @@ export struct AppManageTab {
             this.ActionButton('⚙️', '系统设置', '打开权限/存储页', '#0284C7', () => this.handleOpenSettings())
           }
           GridItem() {
-            this.ActionButton('❌', '免Root卸载', '移除该应用', '#991B1B', () => this.askUninstall())
+            if (this.selectedApp && this.selectedApp.isSystem) {
+              this.ActionButton('🔒', '不可卸载', '系统镜像集成', '#475569', () => this.askUninstall())
+            } else {
+              this.ActionButton('❌', '免Root卸载', '移除该应用', '#991B1B', () => this.askUninstall())
+            }
           }
           GridItem() {
             this.ActionButton('ℹ️', '全息元数据', '原始导出信息', '#059669', () => this.handleViewDetail())
