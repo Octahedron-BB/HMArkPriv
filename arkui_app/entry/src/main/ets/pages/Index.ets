@@ -14,7 +14,7 @@
 import { BusClient } from '../services/BusClient';
 import { BusDirManager } from '../services/BusDirManager';
 import { BatteryReader } from '../services/BatteryReader';
-import { DisplayReader } from '../services/DisplayReader';
+import { ScreenAwakeController } from '../services/ScreenAwakeController';
 import { TerminalConsole } from '../components/TerminalConsole';
 import { DaemonStatusCard } from '../components/DaemonStatusCard';
 import { OpenApiTab } from '../components/OpenApiTab';
@@ -57,12 +57,6 @@ struct Index {
   @State isCharging: boolean = false;
   /** 充电状态上报定时器 */
   private chargeTimerId: number = -1;
-  /** 当前熄屏时间设定（实际生效值） */
-  @State screenTimeoutText: string = '读取中...';
-  /** 这个值的来源说明 */
-  @State screenTimeoutSource: string = '';
-  /** 是否是被 override 覆盖的值 */
-  @State screenTimeoutIsOverride: boolean = false;
   private busClient: BusClient = new BusClient(DEFAULT_BUS_DIR);
 
   aboutToAppear(): void {
@@ -75,34 +69,31 @@ struct Index {
     this.initBusDir();
   }
 
-  /**
-   * 刷新「当前熄屏时间」显示。
-   *
-   * 显示的是**实际生效值**，不是系统设置里的静态值：
-   *   有 override（充电常亮 / App 临时设置）→ 显示 override 的值并标注来源
-   *   没有 override → 显示系统设置值
-   */
-  refreshScreenTimeout(): void {
-    const ctx = getContext(this) as common.UIAbilityContext;
-    const busDir = this.busClient.getBusDir();
-    const info = DisplayReader.readEffectiveTimeout(ctx, busDir ?? '');
-    this.screenTimeoutText = info.text;
-    this.screenTimeoutSource = info.sourceLabel;
-    this.screenTimeoutIsOverride = info.source !== 'system';
-  }
-
   aboutToDisappear(): void {
     this.stopChargeReporting();
+    // 页面销毁时释放锁，避免锁泄漏
+    ScreenAwakeController.release();
   }
 
-  /** 页面可见时开始上报充电状态（切后台就停，靠 daemon 心跳超时兜底） */
+  /** 页面可见时开始上报充电状态（切后台就停） */
   onPageShow(): void {
     this.startChargeReporting();
-    this.refreshScreenTimeout();
   }
 
+  /**
+   * 切后台时停止上报并释放锁。
+   *
+   * 【为什么切后台要释放】
+   * runningLock 的效果是系统级的，切后台仍然有效，但此时 App 已经收不到
+   * 定时器，无法感知"拔掉充电器"这类变化，锁会一直持有到超时（1 小时），
+   * 那就退回成"幽灵常亮"了。宁可切后台后不常亮，也不要失控。
+   *
+   * 如果将来需要"后台也维持"，得改用长时任务（BackgroundTaskManager），
+   * 而鸿蒙的长时任务类型里没有"保持屏幕常亮"这一类。
+   */
   onPageHide(): void {
     this.stopChargeReporting();
+    ScreenAwakeController.release();
   }
 
   /**
@@ -135,6 +126,37 @@ struct Index {
     const snap = BatteryReader.read();
     this.isCharging = snap.charging;
     TrustManager.reportCharging(snap.charging, dir);
+    // 顺带维护「充电常亮」的锁状态
+    this.syncAwakeLock();
+  }
+
+  /**
+   * 同步「充电常亮」的运行锁。
+   *
+   * 【为什么改用 runningLock 而不是 power-shell timeout】
+   * 旧实现是把屏幕超时改成 24 小时，有三个问题：污染用户设置、必须负责还原、
+   * 还原失败就成"幽灵常亮"。runningLock 加的是临时锁，unhold() 后立刻恢复
+   * 用户原本的超时设置，全程不碰 settings。
+   *
+   * 实测（详见 docs/TODO.md 5.0.1）：持锁静置 90 秒屏幕不熄，
+   * 杀掉 App 释放锁后 90 秒内正常熄屏。
+   *
+   * 【代价】锁是 App 侧持有的，App 被杀就释放。但这反而是更安全的行为 ——
+   * 不会像旧方案那样在 App 消失后残留 24 小时常亮。
+   */
+  syncAwakeLock(): void {
+    const shouldHold = this.stayAwakeWhileCharging && this.isCharging;
+    if (shouldHold && !ScreenAwakeController.isHeld()) {
+      // 传一个较长超时兜底：即使 release 没被调用，锁也会自己过期，
+      // 防止极端情况下（进程被杀但锁未释放）导致长时间常亮。
+      ScreenAwakeController.acquire(3600000).then((ok: boolean) => {
+        hilog.info(0x9201, 'Index', `awake lock acquire = ${ok}`);
+      });
+    } else if (!shouldHold && ScreenAwakeController.isHeld()) {
+      ScreenAwakeController.release().then((ok: boolean) => {
+        hilog.info(0x9201, 'Index', `awake lock release = ${ok}`);
+      });
+    }
   }
 
   /**
@@ -202,10 +224,6 @@ struct Index {
       this.connecting = false;
       this.stayAwakeWhileCharging = TrustManager.isStayAwakeWhileCharging(dir);
       this.refreshDaemonStatus();
-      // 总线就绪后必须重读一次熄屏时间：
-      // onPageShow 触发时 initBusDir 还没跑完，那时 busClient 用的还是默认路径，
-      // 读不到 screen_state.txt，会误显示成「系统设置」的值。
-      this.refreshScreenTimeout();
       // 清理旧版明文令牌残留（幂等，没有残留时不做任何事）
       TrustManager.purgeLegacyTokens(ctx, dir);
       if (!ok) {
@@ -358,18 +376,19 @@ struct Index {
     const busDir = this.busClient.getBusDir();
     TrustManager.setStayAwakeWhileCharging(isOn, busDir);
 
+    // 立即同步锁状态，不等 3 秒轮询 —— 用户点了就该马上有反馈
+    this.syncAwakeLock();
+
     if (!isOn) {
-      // 关闭时立刻恢复，不等 daemon 下一轮（用户明确的要求：关了就该不亮）
+      // 兼容：清掉旧方案可能残留的 timeout override（幂等，没有就返回 failed）
       await this.busClient.execute('power-shell timeout -r');
-      this.lastResult = '已关闭「充电时不熄屏」：已恢复系统默认熄屏超时。';
+      this.lastResult = '已关闭「充电时不熄屏」：已释放保持亮屏的锁。';
       return;
     }
 
-    // 开启时先上报一次当前充电状态，daemon 下一轮就会切换到常亮
-    this.tickCharge();
     this.lastResult = this.isCharging
-      ? '已开启「充电时不熄屏」：当前正在充电，已切换为常亮。拔出充电器后自动恢复。'
-      : '已开启「充电时不熄屏」：当前未充电，插入充电器后自动保持常亮。';
+      ? '已开启「充电时不熄屏」：当前正在充电，已保持亮屏。拔出充电器后自动恢复。'
+      : '已开启「充电时不熄屏」：当前未充电，插入充电器后自动保持亮屏。';
   }
 
   /** 电池：走原生 API（hidumper -s BatteryService 实测拿不到数据） */
@@ -902,7 +921,7 @@ struct Index {
         .margin({ bottom: 8 })
 
         Text(this.stayAwakeWhileCharging
-          ? '插上充电器后屏幕不自动熄灭。App 退到后台超过 60 秒会自动停止维持（系统不允许常驻）。'
+          ? '插上充电器后屏幕不自动熄灭。切到后台会停止维持（否则无法感知拔线，可能一直亮）。'
           : '鸿蒙开发者选项里已移除「充电时不锁屏」，此开关是本项目的替代实现。')
           .fontSize(10)
           .fontColor('#475569')
@@ -914,71 +933,11 @@ struct Index {
         // ===== 屏幕 =====
         this.SectionLabel('屏幕')
 
-        // 当前熄屏时间：读系统设置的真实值
-        Row() {
-          Column() {
-            Text('当前熄屏时间')
-              .fontSize(12)
-              .fontColor('#94A3B8')
-            Row() {
-              Text(this.screenTimeoutText)
-                .fontSize(15)
-                .fontColor(this.screenTimeoutIsOverride ? '#FBBF24' : '#E2E8F0')
-                .fontWeight(FontWeight.Medium)
-              if (this.screenTimeoutSource.length > 0) {
-                Text(this.screenTimeoutSource)
-                  .fontSize(10)
-                  .fontColor(this.screenTimeoutIsOverride ? '#FBBF24' : '#64748B')
-                  .backgroundColor(this.screenTimeoutIsOverride ? '#2A2415' : '#1E293B')
-                  .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                  .borderRadius(4)
-                  .margin({ left: 8 })
-              }
-            }
-            .margin({ top: 3 })
-          }
-          .alignItems(HorizontalAlign.Start)
-          .layoutWeight(1)
-
-          Text('刷新')
-            .fontSize(11)
-            .fontColor('#38BDF8')
-            .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-            .backgroundColor('#132A3E')
-            .borderRadius(6)
-            .onClick(() => {
-              this.refreshScreenTimeout();
-              this.lastResult = `已刷新。当前实际生效的熄屏时间：${this.screenTimeoutText}（${this.screenTimeoutSource}）`;
-            })
-        }
-        .width('100%')
-        .padding({ left: 12, right: 12, top: 10, bottom: 10 })
-        .backgroundColor('#1A2332')
-        .borderRadius(10)
-        .margin({ bottom: 6 })
-
-        Text('显示的是当前实际生效的值。亮黄色表示已被临时覆盖（如充电常亮），\n' +
-             '灰色表示就是系统设置「显示和亮度 ▸ 休眠」里的值。')
-          .fontSize(10)
-          .fontColor('#475569')
-          .lineHeight(15)
-          .width('100%')
-          .padding({ left: 4, right: 4 })
-          .margin({ bottom: 8 })
-
         Flex({ wrap: FlexWrap.Wrap }) {
           this.QuickBtn('立即熄屏', CommandBuilder.suspend())
         }
         .width('100%')
-        .margin({ bottom: 4 })
-
-        Text('「立即唤醒」已移除：锁屏时用户点不到这个按钮，实际无用。')
-          .fontSize(10)
-          .fontColor('#475569')
-          .lineHeight(15)
-          .width('100%')
-          .padding({ left: 4, right: 4 })
-          .margin({ bottom: 12 })
+        .margin({ bottom: 12 })
 
         // ===== 设备信息 =====
         this.SectionLabel('设备信息')

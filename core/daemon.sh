@@ -44,26 +44,22 @@ mkdir -p "${WORK_DIR}" 2>/dev/null
 mkdir -p "${BUS_DIR}" 2>/dev/null
 
 # ------------------------------------------------------------------------------
-# 记录「当前实际生效的熄屏超时」
+# 屏幕状态记录
 #
-# 【为什么需要记录】
-# 系统设置里的 SCREEN_OFF_TIMEOUT 只是「用户设置的静态值」，
-# 而 power-shell timeout -o 设的是运行时 override，两者互不影响。
-# 想知道「现在到底多久熄屏」，必须知道 override 是否存在、值多少。
+# 用途：记录「是否有人设过 timeout override」。
+# 背景：没有任何接口能读回 override 的值（hidumper 全零字段、param 里也没有），
+# 唯一能探测「是否存在」的 `timeout -r` 会顺带清除，不能当纯查询用。
 #
-# 可惜没有任何接口能读回 override 的值（hidumper 全零字段、param 里也没有），
-# 唯一能探测「是否存在」的手段是 `timeout -r`，但它会顺带清除 —— 不能用来纯查询。
-#
-# 所以只能自己记账：谁设的 override，就在这个文件里写下来。
-# 前提假设：只有本 App 和 daemon 会设 override（合理，因为都需要 shell 权限）。
-#
-# 格式（两行，daemon 用 printf 就能写，App 用 split 就能读）：
-#   source=charging|app|system
+# 格式（两行，daemon 用 printf 写，App 读起来也简单）：
+#   source=app|system
 #   timeout=<毫秒>
+#
+# 注：充电常亮已改用 App 侧的 runningLock（不改 timeout），
+# 所以这里现在只用于记录 daemon 启动/退出时的兜底清理状态。
 # ------------------------------------------------------------------------------
 SCREEN_STATE="${BUS_DIR}/screen_state.txt"
 
-#   $1 = source（charging / app / system）
+#   $1 = source（app / system）
 #   $2 = timeout 毫秒（system 传 0）
 write_screen_state() {
     [ -f "${SCREEN_STATE}" ] || return 0
@@ -101,8 +97,6 @@ printf "ID:init RC:0 TIME:0\nHMArkPriv Shell Server Ready\n" > "${RES_FILE}" 2>/
 printf '{"framework":"HMArkPriv","status":"ready","pid":%d,"uid":%d}\n' "$$" "$(id -u)" > "${STATUS_FILE}" 2>/dev/null
 
 LAST_REQ_ID=""
-CHARGE_CHECK_COUNTER=55
-IS_KEEPING_AWAKE=0
 FREEZE_CHECK_COUNTER=39
 
 # ------------------------------------------------------------------------------
@@ -111,6 +105,9 @@ FREEZE_CHECK_COUNTER=39
 # 设备上没有 jq / awk，用 grep + sed 提取扁平 JSON 的单个字段。
 #   $1 = 键名
 # 布尔返回 true / false；数字返回数字串；取不到返回空串。
+#
+# 注：充电常亮已移到 App 侧用 runningLock 实现，daemon 不再需要读
+# charging/heartbeat，但这两个函数保留给将来可能的状态读取用。
 # ------------------------------------------------------------------------------
 cfg_bool() {
     grep -o "\"$1\":[a-z]*" "${CONFIG_FILE}" 2>/dev/null | head -n 1 | sed 's/.*://'
@@ -120,50 +117,21 @@ cfg_num() {
 }
 
 # ------------------------------------------------------------------------------
-# 充电防熄屏
+# 充电防熄屏 —— 已从 daemon 移除
 #
-# 【为什么不用 hilog 判断充电状态】
-# 实测真机 `hilog -x -T BatteryInfo | grep pluggedType` 恒为空字符串 ——
-# 鸿蒙根本不往 hilog 打 pluggedType 字段，所以旧实现永远判定"未充电"。
-# /sys/class/power_supply 也被 SELinux 拒绝（Permission denied）。
+# 【为什么移除】
+# 旧实现在这里用 `power-shell timeout -o 86400000` 把屏幕超时改成 24 小时。
+# 这有三个痼疾：污染用户设置、必须负责还原、还原失败就成"幽灵常亮"。
 #
-# 【现在的做法】
-# 充电状态由 App 用 @ohos.batteryInfo 读取后写进 config.json：
-#   stayAwakeWhileCharging : 用户的开关
-#   charging               : 当前是否在充电
-#   heartbeat              : App 最后一次更新的时间戳（秒）
-# daemon 只负责按这三个值做幂等切换，不做任何猜测。
+# 现在改用 App 侧的 @ohos.runningLock（临时锁），实测可行：
+#   - 持锁静置 90 秒屏幕不熄
+#   - 杀掉 App 释放锁后 90 秒内正常熄屏
+#   - 全程不改 settings，unhold() 后立即恢复用户原本的超时设置
+# 详见 docs/TODO.md 5.0.1。
 #
-# 心跳超过 60 秒视为 App 已不在前台，不再维持常亮 —— 避免 App 被杀后
-# 状态卡死导致"一直亮"。
+# daemon 这边**保留启动时的 `power-shell timeout -r` 兜底清理**，
+# 用于清掉旧版本可能残留的 override —— 那个清理在文件开头，与本段无关。
 # ------------------------------------------------------------------------------
-check_stay_awake() {
-    STAY_CONF=$(cfg_bool "stayAwakeWhileCharging")
-    CHARGING=$(cfg_bool "charging")
-    HEARTBEAT=$(cfg_num "heartbeat")
-
-    NOW=$(date +%s)
-    STALE=1
-    if [ -n "${HEARTBEAT}" ] && [ "${HEARTBEAT}" -gt 0 ]; then
-        AGE=$((NOW - HEARTBEAT))
-        [ "${AGE}" -le 60 ] && STALE=0
-    fi
-
-    SHOULD_AWAKE=0
-    if [ "${STAY_CONF}" = "true" ] && [ "${CHARGING}" = "true" ] && [ "${STALE}" -eq 0 ]; then
-        SHOULD_AWAKE=1
-    fi
-
-    if [ "${SHOULD_AWAKE}" -eq 1 ] && [ "${IS_KEEPING_AWAKE}" -eq 0 ]; then
-        power-shell timeout -o 86400000 >/dev/null 2>&1
-        IS_KEEPING_AWAKE=1
-        write_screen_state "charging" "86400000"
-    elif [ "${SHOULD_AWAKE}" -eq 0 ] && [ "${IS_KEEPING_AWAKE}" -eq 1 ]; then
-        power-shell timeout -r >/dev/null 2>&1
-        IS_KEEPING_AWAKE=0
-        write_screen_state "system" "0"
-    fi
-}
 
 # ------------------------------------------------------------------------------
 # 令牌校验
@@ -460,13 +428,6 @@ ${LINE}"
 
     # ---- 协议 2：队列槽位（跨应用调用）----
     process_slots
-
-    # ---- 自动维护：充电防熄屏（每约 3 秒检查一次）----
-    CHARGE_CHECK_COUNTER=$((CHARGE_CHECK_COUNTER + 1))
-    if [ "${CHARGE_CHECK_COUNTER}" -ge 60 ]; then
-        CHARGE_CHECK_COUNTER=0
-        check_stay_awake
-    fi
 
     # ---- 看门狗冻结（每约 2 秒检查一次）----
     # 为什么是 2 秒而不是 1 秒：ps -ef 单次实测约 100ms，

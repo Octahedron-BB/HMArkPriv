@@ -14,7 +14,7 @@
 import { fileIo } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { DEFAULT_BUS_DIR, BUS_FILE_REQ, BUS_FILE_RES, BUS_FILE_STATUS,
-  POLL_INTERVAL_MS, MAX_POLL_ATTEMPTS } from '../common/Constants';
+  POLL_INTERVAL_MS, MAX_POLL_ATTEMPTS, TIMEOUT_MS } from '../common/Constants';
 import { CommandResult, DaemonStatus, createFailedResult } from '../model/CommandResult';
 
 const DOMAIN = 0x9201;
@@ -23,6 +23,18 @@ const TAG = 'BusClient';
 export class BusClient {
   private busDir: string;
   private reqCounter: number = 0;
+  /**
+   * 全局串行锁。
+   *
+   * 【为什么需要】
+   * 总线只有一组 cmd.req / cmd.res 文件，且 daemon 是单线程串行执行命令。
+   * 如果两个页面同时发命令（比如终端页和首页的快捷按钮），
+   * 后写的 reqId 会覆盖前一个，导致先发的命令永远收不到匹配的响应 → 超时。
+   *
+   * 这里用一条 Promise 链把请求排队，保证同一时刻只有一条在飞。
+   * 排队期间不占用轮询，所以不会互相干扰。
+   */
+  private lockChain: Promise<void> = Promise.resolve();
 
   constructor(busDir: string = DEFAULT_BUS_DIR) {
     this.busDir = busDir;
@@ -74,7 +86,30 @@ export class BusClient {
    * 4. 解析 RC 和输出
    * 5. 超时返回错误
    */
+  /**
+   * 执行一条 shell 命令（对外入口）。
+   *
+   * 用锁链保证串行：总线只有一组 cmd.req/cmd.res，且 daemon 单线程，
+   * 并发写入会互相覆盖导致先发的请求永远等不到响应。
+   */
   async execute(command: string): Promise<CommandResult> {
+    // 把本次任务接到锁链尾部，等前面所有请求做完再执行
+    const prev = this.lockChain;
+    let release: () => void = () => {};
+    this.lockChain = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    try {
+      await prev;
+      return await this.executeOnce(command);
+    } finally {
+      release();
+    }
+  }
+
+  /** 单次执行（不含排队逻辑），由 execute() 串行调用 */
+  private async executeOnce(command: string): Promise<CommandResult> {
     // 【危险命令拦截】真机实测：以下命令会阻塞在内核态（Binder 调用挂起），
     // 连 SIGKILL 都无法终止，导致 daemon 永久失联。
     // 详见 docs/真机vs模拟器差异报告.md 第四章。
@@ -141,13 +176,24 @@ export class BusClient {
       }
     }
 
-    // 超时
+    // 超时：先确认 daemon 是否还活着，再决定给什么提示。
+    // 只剩一种"真超时"就是命令本身太长（daemon 上限 25 秒），
+    // 如果连 status.json 都不响应，那才是 daemon 挂了。
     hilog.warn(DOMAIN, TAG, `timeout waiting for response: ${reqId}`);
+    const alive = await this.checkDaemonStatus();
+    if (alive !== null) {
+      return createFailedResult(
+        `[超时] 命令执行超过 ${Math.round(TIMEOUT_MS / 1000)} 秒仍未返回。\n` +
+        'daemon 在线，可能是命令本身耗时过长（如 hidumper 大表格、流式输出）。\n' +
+        '建议加管道限制输出量，例如 `hidumper --mem | head -20`。',
+        Date.now() - startTime,
+      );
+    }
     return createFailedResult(
-      '[错误] 响应超时，daemon 可能未运行。\n' +
-      '请通过 hdc 部署 daemon.sh:\n' +
+      '[错误] 响应超时，且 daemon 无响应。\n' +
+      '请通过 hdc 重新部署 daemon.sh:\n' +
       '  hdc file send core/daemon.sh /data/local/tmp/hmpriv/daemon.sh\n' +
-      '  hdc shell sh /data/local/tmp/hmpriv/daemon.sh &',
+      '  hdc shell "sh -c \'nohup sh /data/local/tmp/hmpriv/daemon.sh >/dev/null 2>&1 & sleep 2\'"',
       Date.now() - startTime,
     );
   }

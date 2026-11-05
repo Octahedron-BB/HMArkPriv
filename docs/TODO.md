@@ -516,133 +516,91 @@ MDM Kit 里对应的接口是 `applicationManager.addDisallowedRunningBundlesSyn
 
 ### 5. 电池与电源策略深度联动（Battery & Power）
 
-#### 5.0 熄屏时间：读取方式与 override 的关系（2026-11-05 实测）
+#### 5.0 充电常亮：已改用 runningLock（2026-11-05 重构）
 
-**为什么要做这个**：原来「系统」Tab 里的「立即唤醒」按钮是无效设计 ——
-锁屏状态下用户根本点不到它。改成显示当前熄屏时间设定，让用户能看到系统真实状态。
+**旧方案的三宗罪**：用 `power-shell timeout -o 86400000` 把屏幕超时改成 24 小时。
 
-**读取方式**：
+1. **污染用户设置** —— 必须负责还原，还原失败就成"幽灵常亮"
+2. **精度差** —— 改的是绝对超时值，不是"条件性保持"
+3. **状态错乱** —— 和用户手动改设置互相覆盖
 
-```typescript
-import { settings } from '@kit.BasicServicesKit';
-const v = settings.getValueSync(context, settings.display.SCREEN_OFF_TIMEOUT, '-1');
-// 实测返回 "60000"，即 1 分钟，与系统设置界面显示一致
-```
+**新方案**：`@ohos.runningLock`，加临时锁而不是改超时（对应 Android 的 wakelock 思路）。
 
-- 不需要特殊权限
-- `getValueSync` 在 `settings` **顶层**，不在 `settings.display` 下
-  （`SCREEN_OFF_TIMEOUT` 这个 key 常量才属于 `display` 命名空间）
-- 导入来自 `@kit.BasicServicesKit`，不是 `@kit.ArkData`
+实测数据（真机 Pura 70 Pro+，用户设置 60 秒熄屏）：
 
-**但只显示这个值没有意义** —— 用户自己去系统设置就能看到。
-真正有用的是「**当前实际生效值**」（override 可能覆盖了它）。
-所以最终的实现是两层：
+| 状态 | 静置 90 秒后 `screenOn:true` 记录 | 判定 |
+|------|--------------------------------|------|
+| 无锁 | 1 条（唤醒瞬间，随后消失） | ✅ 已熄屏 |
+| **持锁** | **2 条（每分钟持续出现）** | ✅ **一直亮着** |
+| 杀 App 释放锁 | 1 条 | ✅ 恢复正常熄屏 |
 
-| 情况 | 显示 | 颜色 |
-|------|------|------|
-| 有 override（充电常亮 / App 临时设置） | override 的值 + 来源标签 | 亮黄 `#FBBF24` |
-| 无 override | 系统设置值 + 「系统设置」 | 灰 `#E2E8F0` |
+**权限**：`ohos.permission.RUNNING_LOCK` 是 `availableLevel: normal` + `system_grant`，
+不是 MDM 那种受限 ACL，普通应用声明后能正常安装（对比 `ENTERPRISE_*` 会 9568289 装不上）。
 
-实测效果：
-- 充电常亮生效时 → 显示「24 小时」+「充电常亮（本 App 维持）」
-- 关掉开关后 → 显示「1 分」+「系统设置」
+**锁类型**：
 
-**override 值是怎么记录的**（关键设计）
+| 类型 | isSupported | 说明 |
+|------|------------|------|
+| `BACKGROUND` | ✅ true | 屏幕关闭后系统不进入休眠 —— **本项目采用** |
+| `BACKGROUND_USER_IDLE` | ❌ false | 语义更贴切（用户空闲不自动休眠），但本机不支持，API 23+ |
 
-没有任何接口能读回 override 的值：`hidumper -s PowerManagerService` 零字段、
-`param get` 里也没有；唯一能探测「是否存在」的 `timeout -r` 会顺带清除，不能纯查询。
+**实现要点**：
 
-所以只能自己记账 —— 总线目录新增 `screen_state.txt`：
+- `ScreenAwakeController.acquire(3600000)` —— 传 1 小时超时兜底，
+  即使 release 没被调用，锁也会自己过期，避免极端情况泄漏
+- 判断条件：`开关开 && 正在充电`，在 `tickCharge()` 里每 3 秒同步一次
+- **切后台时释放锁**：runningLock 的效果是系统级的，切后台仍然有效，
+  但此时 App 收不到定时器、无法感知"拔线"，锁会一直持到超时 —— 那就退回成幽灵常亮了
+- daemon 侧的 `check_stay_awake()` **已整体移除**，只保留启动时的
+  `power-shell timeout -r` 兜底清理（清掉旧版本可能残留的 override）
 
-```
-source=charging|app|system
-timeout=<毫秒>
-```
+**代价**：锁是 App 侧持有的，App 被杀就释放。但这反而是更安全的行为。
 
-- daemon 设置充电常亮时写 `source=charging timeout=86400000`
-- daemon 恢复时写 `source=system timeout=0`
-- daemon 启动清理时也写 `system`（防止上次 kill -9 留下脏记录）
-- App 手动设置超时时写 `source=app`
+#### 5.0.1 排查"不熄屏"的两天踩坑记录
 
-前提假设：只有本 App 和 daemon 会设 override（合理，因为都需要 shell 权限）。
-如果是外部工具设的 override，我们无从知晓具体值 —— 这个局限已知。
+用户反馈「关了充电不熄屏，手机还是不熄屏，怀疑卡在 24 小时」。
+排查结论：**不是我们 App 的问题**，是三个因素叠加导致的误判。
 
-**踩到的一个时序坑**：`onPageShow` 触发时 `initBusDir` 还没跑完，
-那时 `busClient.getBusDir()` 返回的还是 `DEFAULT_BUS_DIR`（daemon 的绝对路径），
-读不到 `screen_state.txt`，会误显示成「系统设置」的值。
-（实测日志时间差仅 33ms：`readEffective: busDir="/storage/media/100/..."` 在前，
-`busDir set to: /storage/Users/currentUser/...` 在后。）
-修复：总线就绪后**再次**调用 `refreshScreenTimeout()`。
+**因素一：「注视屏幕不熄屏」开着**
 
-**shell 改超时，系统设置里会体现吗？—— 不会**
+系统设置 → 显示和亮度 → 屏幕，这个开关默认**开启**（实测 `checked=true`）。
+它靠前置摄像头检测你是否在看屏幕，一看就不让熄屏。
+既然人在测试、一直在看屏幕，就永远不会熄。
 
-实测流程：
-1. 系统设置「显示和亮度 ▸ 休眠」显示「1 分钟后」（即 60000ms）
-2. `power-shell timeout -o 150000`（2.5 分钟）
-3. 重新打开设置页 → **仍显示「1 分钟后」**
+**因素二：`uitest dumpLayout` 会阻止熄屏**
 
-两者是**完全独立的两层**：
-- 系统设置的「休眠」值存在 settingsdata 里（`SCREEN_OFF_TIMEOUT`）
-- `power-shell timeout -o` 设的是**运行时 override**，不写回设置值
+这个命令本身是一次 UI 操作，等于持续"打扰"设备。
+之前反复用它查询状态，导致「静置 75 秒屏幕还亮」的假象，
+一度误以为 override 没生效。**正确做法：静置期间不发任何命令，到点只查一次。**
 
-**谁优先？—— override 优先**
+**因素三：判断"是否熄屏"没有直接接口**
 
-实测：用户设置 60 秒，设 `timeout -o 15000`（15 秒）后静置，
-35 秒时屏幕已熄（前台从设置页变成只剩 sceneboard）。
-若用户设置优先则应该 60 秒才熄。
+- `hidumper -s PowerManagerService` 零字段
+- `hidumper --power` 参数不存在
+- `/sys/power/` 被 SELinux 拒绝
+- `param get` 没有这个键
 
-`power-shell timeout -r` 的返回值可判断 override 是否存在（可靠的探测手段）：
+**最终可用的判据**：查 hilog 里 `screenOn:true` 的出现次数。
+sceneboard 的 `ClockData: needUpdateLockTime screenOn:true` 每分钟打一次，
+所以：
+- 静置 N 分钟内出现 ≥2 次 → 屏幕持续亮着
+- 只有 1 次（唤醒瞬间）或 0 次 → 已熄屏
 
-| 命令 | 返回值 | 含义 |
-|------|--------|------|
-| `timeout -r` | `Restore screen off time` | **有** override，已清除 |
-| `timeout -r` | `Restore screen off time failed` | **没有** override |
+**另一个坑**：`power-shell timeout -r` 的返回值只能判断"有无 override"，
+**不能判断屏幕是否真的会熄**。我一度因为 `-r` 返回 failed（无 override）
+就认定"没有东西在阻止熄屏"，这个推论是错的 —— 还有别的机制能阻止熄屏。
 
-**这是测量「当前是否常亮」的唯一非侵入式手段**，
-`hidumper -s PowerManagerService` 零字段，`param get` 里也没有这个键。
+#### 5.0.2 已移除「当前熄屏时间」显示
 
-> ⚠️ **测试方法上的坑（记录以免重犯）**：
-> `uitest dumpLayout` **会阻止屏幕熄灭**。之前反复用 dumpLayout 查询状态，
-> 导致「静置 75 秒屏幕还亮」的假象，误以为 override 不生效。
-> 正确做法是静置期间**不发任何命令**，到点后只查一次。
->
-> 另一个坑：屏幕锁定时前台就是 `com.ohos.sceneboard`，
-> 所以「前台只剩 sceneboard」确实可以代表已熄屏（或已锁定）。
-> 但**必须先让某个应用在前台作标记**，否则无法区分
-> 「屏幕熄了」和「本来就在桌面」。
+做过一版：显示系统设置里的 `SCREEN_OFF_TIMEOUT`，后来改成显示"实际生效值"
+（读 `screen_state.txt` 判断是否有 override）。**最终按用户要求删掉**：
 
-**产品决策**：显示「实际生效值」而不是「系统设置的静态值」。
-用户自己去系统设置就能看到静态值，界面上再显示一遍没有意义；
-有用的是「现在到底多久熄屏」（可能已被 override 覆盖）。
-有 override 时用亮黄色标出并注明来源，让用户一眼看出「这不是系统设置的原值」。
+> 「这个当前熄屏时间我看写的是系统设置里的值，这个没意义，我自己去系统设置里就能看啊」
 
-#### 5.0.1 意外收获：runningLock 可能是充电常亮的更好实现（待验证）
+确实如此。字段保留的价值不足，反而占用界面空间。
+如果要看真实生效值，更可靠的方式是看「充电时不熄屏」开关本身的状态。
 
-查资料时发现 `@ohos.runningLock`，它对应 Android 的 wakelock 思路 ——
-**加临时锁**而不是**改超时值**，正好能解决现在这套方案的三个痼疾
-（污染用户设置、要负责还原、还原失败就成幽灵常亮）。
-
-**实测结论**：
-
-| 项目 | 结果 |
-|------|------|
-| `ohos.permission.RUNNING_LOCK` 等级 | `availableLevel: normal` + `system_grant`，**不是受限 ACL**，普通应用可声明 |
-| 声明后能否安装 | ✅ 可以（对比 MDM 权限会 9568289 装不上） |
-| `RunningLockType.BACKGROUND_USER_IDLE` | ❌ `isSupported() = false`（本设备不支持，API 23+ 才有） |
-| `RunningLockType.BACKGROUND` | ✅ `isSupported() = true`，`acquire()` 返回 true |
-
-`BACKGROUND` 的语义是「屏幕关闭后系统不进入休眠」，`BACKGROUND_USER_IDLE` 才是
-「用户空闲时不自动休眠」——后者更贴合「充电时不熄屏」，可惜本机不支持。
-
-**未能验证 **：`acquire()` 成功之后是否真的阻止了熄屏。
-原因是测试环境本身就不熄屏：设备在充电、且「注视屏幕不熄屏」可能开着，
-对照组（不持锁）静置 80 秒也不熄，导致「是否熄屏」这个判据不可用。
-
-要验证得换个环境：拔掉充电线 → 确认静置会熄屏 → 再持锁重测。
-
-**如果验证通过，充电常亮应该改用这个方案**：不再动 `power-shell timeout`，
-`hold()` 期间不熄屏，`unhold()` 立即恢复用户原本设置，没有残留风险。
-目前代码里没有采用，等验证。
+删除涉及：`DisplayReader.ets` 整文件、Index 页的显示卡片与刷新逻辑。
 
 - [ ] **硬件级电池状态透视**：
       - 结合系统底层原生接口与 `hidumper`，读取电池真实循环次数、真实健康度、实时充放电毫安电流、电池温度与电压。
@@ -668,7 +626,7 @@ timeout=<毫秒>
 「系统」Tab 已落地，含「电源与屏幕」和「设备信息」两区：
 
 - [x] 充电时不熄屏开关
-- [x] **显示当前熄屏时间**（2026-11-05 新增，替代了原来没用的「立即唤醒」）
+- [x] ~~显示当前熄屏时间~~ → 已按用户要求删除（用户自己能在系统设置看到，界面重复无意义）
 - [x] 立即熄屏
 - [x] 电池 / 系统参数 / 内存 / CPU 频率 的查询入口（输出到「最近结果」区）
 - [ ] 电池卡片（把 `@ohos.batteryInfo` 的电量/温度/电压画成卡片，而不是纯文本）
@@ -696,6 +654,39 @@ PowerManagerService）在 shell 权限下**只返回两行标题、零字段**�
 - [x] 签名配置移出仓库（`build-profile.local.json5` + build.sh 自动注入/还原）
 - [x] 工程目录统一为 `arkui_app`（下划线命名，Windows/macOS 通用）
 - [x] 修复 daemon 幽灵常亮、多行命令截断、`.gitattributes` 强制 LF
+- [x] **修复「偶发响应超时」**（2026-11-05，详见下方说明）
+- [x] **充电常亮改用 runningLock**（见 §5.0），daemon 侧旧逻辑已移除
+
+### 5.0.3 修复「指令偶尔提示响应超时」（2026-11-05）
+
+用户反馈「试了几个指令，偶尔好用，偶尔就提示响应超时」。
+
+**根因**：App 侧超时 5 秒，daemon 侧允许单条命令跑 25 秒
+（`timeout -k 5 20`）。任何耗时超过 5 秒的命令都会在 App 侧"超时"，
+但 daemon 其实还在正常执行 —— 这就是"偶尔好用偶尔超时"的来源。
+
+实测：一条 `sleep 8` 的命令实际耗 9 秒，必然触发 5 秒超时。
+
+**修复**：
+
+| 项目 | 改前 | 改后 |
+|------|------|------|
+| App 超时 | 5000 ms | **30000 ms**（覆盖 daemon 25 秒上限 + 5 秒余量）|
+| 轮询次数 | 100 | 600 |
+| 超时提示 | 一律说"daemon 可能未运行" | 先查 daemon 是否存活，再区分两种原因 |
+
+超时提示现在的逻辑：
+- daemon 在线 → 提示"命令执行超过 30 秒仍未返回，可能是命令本身耗时过长"
+- daemon 不在 → 提示重新部署，给出完整命令
+
+**同时修掉一个并发隐患**：总线只有一组 `cmd.req`/`cmd.res`，且 daemon 单线程。
+如果两个页面同时发命令（终端页 + 首页快捷按钮），后写的 reqId 会覆盖前一个，
+导致先发的请求永远等不到响应 —— 表现也是超时。
+给 `BusClient` 加了一条 Promise 锁链，保证同一时刻只有一条命令在飞。
+
+**实测验证**：App 终端里执行 `sleep 8; echo SLOWOK`，12 秒后正常返回 `SLOWOK`，
+不再误报超时。
+
 
 ### 待办
 - [ ] **daemon 保活**：系统回收后需手动重启，App 内应能一键重新部署
@@ -707,7 +698,7 @@ PowerManagerService）在 shell 权限下**只返回两行标题、零字段**�
 - [ ] 设置页：主题、字号、默认轮询间隔、清空历史
 - [ ] 命令历史面板（`cmdHistory` 已收集，但没有 UI 展示）
 - [ ] 输出区支持长文本分页 / 导出到文件
-- [ ] 无 daemon 时优雅降级（当前会等 5 秒超时）
+- [x] ~~无 daemon 时优雅降级~~ → 已改为 30 秒超时 + 存活检测（见 §5.0.3）
 
 ---
 
