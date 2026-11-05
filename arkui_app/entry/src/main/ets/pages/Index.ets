@@ -14,6 +14,7 @@
 import { BusClient } from '../services/BusClient';
 import { BusDirManager } from '../services/BusDirManager';
 import { BatteryReader } from '../services/BatteryReader';
+import { BatteryWatcher } from '../services/BatteryWatcher';
 import { TerminalConsole } from '../components/TerminalConsole';
 import { DaemonStatusCard } from '../components/DaemonStatusCard';
 import { OpenApiTab } from '../components/OpenApiTab';
@@ -139,6 +140,8 @@ struct Index {
     const snap = BatteryReader.read();
     this.isCharging = snap.plugged;
     TrustManager.reportCharging(snap.plugged, dir);
+    // 【诊断】订阅系统电量广播，验证切后台后回调是否仍触发（幂等，只订阅一次）
+    BatteryWatcher.start(dir);
     // 顺带维护「充电常亮」状态；并刷新 daemon 记录的真实状态。
     // 放在这里而不是只放在 onPageShow，是因为 onPageShow 可能早于 initBusDir
     // 完成（实测早 33ms），那时 busDir 还是空，读不到 screen_state.txt。

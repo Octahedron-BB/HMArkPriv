@@ -91,12 +91,36 @@ CHG_GRACE=1800
 # 那时就会调用 probe_system_state 并写状态文件，空值会写进去。
 SCREEN_LAST_ONOFF="unknown"
 CHARGING_STATE="unknown"
+# 从日志读到的最新充电状态（yes/no/unknown）。每 30 秒刷新。
+LOG_CHG="unknown"
+# 本次判定用了哪个来源：log / app / none（写进状态文件便于排查）
+CHG_SRC="none"
+LAST_LOGGED=""
 
 #   $1 = override（0/1）  $2 = timeout 毫秒
 write_screen_state() {
-    printf 'override=%s\ntimeout=%s\nscreen=%s\ncharging=%s\nts=%s\n' \
+    printf 'override=%s\ntimeout=%s\nscreen=%s\ncharging=%s\nsrc=%s\nts=%s\n' \
         "$1" "$2" "${SCREEN_LAST_ONOFF:-unknown}" "${CHARGING_STATE:-unknown}" \
-        "$(date +%s)" > "${SCREEN_STATE}" 2>/dev/null
+        "${CHG_SRC:-none}" "$(date +%s)" > "${SCREEN_STATE}" 2>/dev/null
+}
+
+# 状态变迁记录：只在 (charging, override) 变化时追加一行。
+#
+# 【为什么需要】验证"后台拔线能否被发现"时，hdc 会随 USB 一起断掉，
+# 没法实时观察。把变迁记进文件，重新插上后回看即可。
+# 只记变化而不是每轮都记，是为了让文件在长时间运行后仍然可读。
+# 注：文件必须预先存在 —— 本机 SELinux 禁止 shell 在 hmdfs 目录里新建文件。
+HISTORY_LOG="${BUS_DIR}/hist.log"
+
+log_transition() {
+    [ -f "${HISTORY_LOG}" ] || return 0
+    if [ "$1|$2" = "${LAST_LOGGED}" ]; then
+        return 0
+    fi
+    LAST_LOGGED="$1|$2"
+    printf '%s charging=%s override=%s src=%s screen=%s\n' \
+        "$(date '+%m-%d %H:%M:%S')" "$1" "$2" "${CHG_SRC:-none}" \
+        "${SCREEN_LAST_ONOFF:-unknown}" >> "${HISTORY_LOG}" 2>/dev/null
 }
 
 # 读回记账值
@@ -124,16 +148,32 @@ probe_system_state() {
     PROBE_TMP="${WORK_DIR}/.probe.tmp"
     hilog -x > "${PROBE_TMP}" 2>/dev/null
 
-    # 【只探测屏幕亮灭，不在这里判断充电】
-    # 曾经想从 powermgr 的 BatteryInfo 日志里取 pluggedType，但那是个陷阱：
-    # 环形缓冲区实测只保留约 2 分钟（9000 行），而 BatteryInfo 是事件驱动
-    # （只有插拔才打），绝大多数时候根本不在缓冲区里。偶尔读到一次就当成
-    # 长期状态，会导致拔线后仍然常亮 —— 这正是用户实测到的问题。
-    # 所以充电状态只认 App 的原生 API 上报（见决策逻辑）。
+    # ---- 1) 屏幕亮灭（sceneboard，约每分钟一行）----
     PROBE_LINE=$(grep 'screenOn:' "${PROBE_TMP}" 2>/dev/null | tail -n 1)
     case "${PROBE_LINE}" in
         *'screenOn:true'*)  SCREEN_LAST_ONOFF="on" ;;
         *'screenOn:false'*) SCREEN_LAST_ONOFF="off" ;;
+    esac
+
+    # ---- 2) 充电状态（powermgr/BatteryInfo）----
+    #
+    # 【这里推翻过两次结论，最终实测数据如下】
+    # malformed 的观察：有时候在缓冲区里一行都找不到，于是以为"日志不可靠"。
+    # 真相是：这行**每 30 秒就会打印一次**（实测连续采样 6 次，间隔稳定 30s），
+    # 但环形缓冲区只有 2~5 分钟且会被刷屏日志挤掉 —— 找不到只是那一刻被冲了。
+    #
+    # 关键推论：daemon 每 30 秒轮询一次，而日志每 30 秒写一行、缓冲区能留 ≥2 分钟，
+    # 所以「轮询时几乎总能捞到一行」，而且捞到的必然是 2 分钟内的新值。
+    # 这就让 daemon 能独立判断插拔，不再依赖 App 是否在前台 —— 残留窗口随之消失。
+    #
+    # 取不到就置 unknown：让判定链自然降级到 App 心跳 / 宽限期，
+    # 而不是把一个可能过期的 yes 一直当成事实。
+    PROBE_PT=$(grep 'BatteryInfo: capacity' "${PROBE_TMP}" 2>/dev/null \
+        | grep -o 'pluggedType=[0-9]*' | tail -n 1)
+    case "${PROBE_PT}" in
+        pluggedType=0) LOG_CHG="no" ;;
+        pluggedType=*) LOG_CHG="yes" ;;
+        *)             LOG_CHG="unknown" ;;
     esac
 
     rm -f "${PROBE_TMP}" 2>/dev/null
@@ -685,17 +725,29 @@ ${LINE}"
             # 无从判断是否还插着电。所以心跳不新鲜就**判定为不应常亮**，
             # 让 override 在 10 分钟内自然过期 —— 宁可功能暂时不生效，
             # 也不能在拔线后让屏幕一直亮着（那正是之前被用户抓到的 bug）。
+            # 【优先级 1：系统日志】每 30 秒一行、轮询 30 秒一次，几乎必然能捞到。
+            # 这条不依赖 App，App 在后台/被杀都不影响，是真正的设备级判断。
             HB=$(cfg_num heartbeat)
             NOW_HB=$(date +%s)
-            if [ -n "${HB}" ] && [ $((NOW_HB - HB)) -le 120 ]; then
-                # 心跳新鲜：以 App 上报为准（这是唯一实时可靠的来源）
+            if [ "${LOG_CHG}" = "yes" ] || [ "${LOG_CHG}" = "no" ]; then
+                CHARGING_STATE="${LOG_CHG}"
+                CHG_SRC="log"
+                LAST_CHG_TS="${NOW_HB}"
+            elif [ -n "${HB}" ] && [ $((NOW_HB - HB)) -le 120 ]; then
+                CHG_SRC="app"
+            else
+                CHG_SRC="none"
+            fi
+
+            # 【优先级 2：App 心跳】仅在日志取不到时作为补充
+            if [ "${CHG_SRC}" = "app" ]; then
                 if [ "$(cfg_bool charging)" = "true" ]; then
                     CHARGING_STATE="yes"
                 else
                     CHARGING_STATE="no"
                 fi
                 LAST_CHG_TS="${NOW_HB}"
-            else
+            elif [ "${CHG_SRC}" != "log" ]; then
                 # 心跳过期：App 已切后台，无从得知当前是否还插着电。
                 #
                 # 【为什么沿用旧值而不是立刻判 unknown】
@@ -747,6 +799,9 @@ ${LINE}"
                     write_screen_state "0" "0"
                 fi
             fi
+
+            # 记录变迁（只在变化时写一行，用于事后回溯）
+            log_transition "${CHARGING_STATE}" "$(read_state_val override)"
         fi
 
         # 续期：值 10 分钟、每 5 分钟续一次，只要 daemon 活着就永不过期；
