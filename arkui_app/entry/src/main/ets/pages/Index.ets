@@ -54,6 +54,13 @@ struct Index {
   /** 充电防熄屏开关 */
   @State stayAwakeWhileCharging: boolean = false;
   /** 当前是否在充电（用于开关行的副标题提示） */
+  /**
+   * 是否已插电（不是"是否正在充电"）。
+   *
+   * 两者必须区分：本机插着 USB 且电量满时 chargingStatus=3(FULL)、
+   * pluggedType=2(USB)。只看 chargingStatus 会显示"未充电"，用户会以为没插电。
+   * "充电时不熄屏"关心的是有没有外部供电，所以用 plugged。
+   */
   @State isCharging: boolean = false;
   /** daemon 记账：是否处于超时覆盖（常亮）状态 */
   @State screenOverride: boolean = false;
@@ -130,8 +137,8 @@ struct Index {
       return;
     }
     const snap = BatteryReader.read();
-    this.isCharging = snap.charging;
-    TrustManager.reportCharging(snap.charging, dir);
+    this.isCharging = snap.plugged;
+    TrustManager.reportCharging(snap.plugged, dir);
     // 顺带维护「充电常亮」状态；并刷新 daemon 记录的真实状态。
     // 放在这里而不是只放在 onPageShow，是因为 onPageShow 可能早于 initBusDir
     // 完成（实测早 33ms），那时 busDir 还是空，读不到 screen_state.txt。
@@ -447,8 +454,8 @@ struct Index {
     }
 
     this.lastResult = this.isCharging
-      ? '已开启「充电时不熄屏」：正在充电，屏幕将不再自动熄灭（全局生效，退出 App 也保持）。'
-      : '已开启「充电时不熄屏」：当前未充电，插入充电器后生效。';
+      ? '已开启「充电时不熄屏」：已插电，屏幕将不再自动熄灭。'
+      : '已开启「充电时不熄屏」：当前未插电，插上后生效。';
   }
 
   /** 电池：走原生 API（hidumper -s BatteryService 实测拿不到数据） */
@@ -956,7 +963,7 @@ struct Index {
                 .fontColor('#E2E8F0')
                 .fontWeight(FontWeight.Medium)
               Text(this.stayAwakeWhileCharging
-                ? (this.isCharging ? '已开启 · 正在充电，屏幕不会自动熄灭' : '已开启 · 未充电，插电后生效')
+                ? (this.isCharging ? '已开启 · 已插电，屏幕不会自动熄灭' : '已开启 · 未插电，插上后生效')
                 : '已关闭（遵循系统熄屏设置）')
                 .fontSize(10)
                 .fontColor(this.stayAwakeWhileCharging
@@ -1032,7 +1039,7 @@ struct Index {
             .fontColor(this.daemonCharging === 'yes'
               ? '#4ADE80'
               : (this.daemonCharging === 'no' ? '#64748B' : '#475569'))
-          Text(' · daemon 独立检测，App 在后台也生效')
+          Text(' · 依据 App 原生 API，本 App 切后台后无法继续判断')
             .fontSize(10)
             .fontColor('#475569')
         }
@@ -1043,8 +1050,8 @@ struct Index {
         .margin({ bottom: 8 })
 
         Text(this.stayAwakeWhileCharging
-          ? '由常驻 daemon 执行，全局生效：退出 App、切后台都保持。daemon 自己检测插拔，拔线后约 30 秒内撤销。'
-          : '开关打开后，插着充电器时屏幕不再自动熄灭。daemon 会把超时覆盖设成 10 分钟并每 5 分钟续期，所以即使 daemon 意外退出，最多多亮 10 分钟就自行恢复。')
+          ? '由常驻 daemon 执行：本 App 在前台时持续维持常亮，拔线后约 10 秒撤销。'
+          : '开关打开后，插着充电器时屏幕不再自动熄灭。超时覆盖设为 10 分钟并每 5 分钟续期，所以 daemon 意外退出时最多多亮 10 分钟就自行恢复。')
           .fontSize(10)
           .fontColor('#475569')
           .lineHeight(15)
@@ -1066,8 +1073,8 @@ struct Index {
         Flex({ wrap: FlexWrap.Wrap }) {
           this.QuickBtn('电池', '')
           this.QuickBtn('系统参数', '')
-          this.QuickBtn('内存', 'hidumper --mem | head -20')
-          this.QuickBtn('CPU 频率', 'hidumper --cpufreq')
+          this.QuickBtn('内存', CommandBuilder.memInfo())
+          this.QuickBtn('CPU 负载', CommandBuilder.cpuLoad())
         }
         .width('100%')
         .margin({ bottom: 12 })

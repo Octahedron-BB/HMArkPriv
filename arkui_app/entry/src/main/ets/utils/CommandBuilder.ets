@@ -148,10 +148,27 @@ export class CommandBuilder {
   static param(key: string): string { return `param get ${key}`; }
   /** 窗口信息 ❌ 真机零数据 */
   static windowInfo(): string { return 'hidumper -s WindowManagerService'; }
-  /** 内存统计 ✅ 有表格数据 */
-  static memInfo(): string { return 'hidumper --mem'; }
-  /** CPU 频率 ✅ */
-  static cpuFreq(): string { return 'hidumper --cpufreq'; }
+  /**
+   * 内存统计 —— 读 /proc/meminfo，**不要用 hidumper --mem**。
+   *
+   * 【实测事故 2026-11-05】`hidumper --mem` 会阻塞在内核态 Binder 调用里，
+   * 连 SIGKILL 都杀不死（进程僵在 R 状态、父进程变 1）。daemon 当时是同步等
+   * `$(...)` 输出，于是一起被拖死 —— 用户点完"内存"后所有命令全部超时。
+   * /proc/meminfo 是普通文本文件，毫秒级返回，且含 Swap 信息，比 hidumper 更全。
+   */
+  static memInfo(): string {
+    return 'grep -E "MemTotal|MemFree|MemAvailable|Buffers|^Cached|SwapTotal|SwapFree|SwapCached|Dirty|Slab" /proc/meminfo';
+  }
+  /**
+   * CPU 负载 —— 用 toybox top，**不要用 hidumper --cpufreq**。
+   *
+   * 【为什么换】实测 daemon（无 tty）跑 `hidumper --cpufreq` / `--cpuusage`
+   * 只返回表头或空行：这类 dump 的输出依赖 stdout 是 tty，重定向就被丢弃。
+   * 本机 /proc/loadavg 也是 Permission denied，sysfs 的 cpufreq 同样拒绝。
+   * `toybox top -n 1` 是唯一稳定可用的：给出任务数、内存、Swap 和
+   * user/sys/idle/iow 各项占比（总数 % 即核数×100，可反推核数）。
+   */
+  static cpuLoad(): string { return 'toybox top -n 1 | head -6'; }
 
   // ===== 卓易通（ANCO）穿透 =====
   //

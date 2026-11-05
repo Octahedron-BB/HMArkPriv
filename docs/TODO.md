@@ -606,6 +606,77 @@ ts=<秒>
 **残留限制**：记账只知道"我们设了什么"。用户在终端里手动 `power-shell timeout -o`
 不会同步。自用场景可接受。
 
+#### 5.0.5 daemon 被"杀不死的命令"拖死（2026-11-05 用户实测报告）
+
+用户报告：点「系统参数」成功，再点「内存」「CPU 频率」后提示超时，之后连「系统参数」
+也点不出来，整个 App 像卡死。
+
+**根因**：`hidumper --mem` 阻塞在内核态 Binder 调用里，**SIGKILL 都杀不死**
+（进程僵在 R 态、父进程变 1）。而 daemon 当时是同步等 `$(timeout ...)` 的输出，
+于是整条主循环死在那一行 —— 后续所有命令自然全部超时。
+
+```
+$ ps -ef | grep hidumper
+shell  51148  1  0 18:00:11 ?  hidumper --mem      ← 父进程已变成 1，杀了不掉
+```
+
+**修法一（结构性，关键）**：daemon 执行命令改成"后台跑 + 自己轮询 + 到点放弃"。
+放弃时**不 wait**（避免被僵死子进程拖住），直接把 `RC=124` 和说明返回给调用方。
+实测发一个必卡的 `hidumper --mem`，34 秒后 daemon 正常回 `RC:124`，紧接着
+再发命令立刻有响应。
+
+**修法二（换数据源）**：
+
+| 按钮 | 原来 | 现在 | 原因 |
+|------|------|------|------|
+| 内存 | `hidumper --mem` | `grep ... /proc/meminfo` | 原命令会永久卡死；/proc 毫秒级且含 Swap |
+| CPU 频率 | `hidumper --cpufreq` | `toybox top -n 1`（改名「CPU 负载」） | cpufreq/cpuusage 无 tty 只回表头或空行 |
+
+**无 tty（daemon）下各数据源实测**：
+
+| 数据源 | 结果 |
+|--------|------|
+| `/proc/meminfo` | ✅ 完整（含 Swap） |
+| `/proc/loadavg`、`/proc/cpuinfo` | ❌ Permission denied |
+| `/sys/devices/system/cpu/*` | ❌ Permission denied |
+| `hidumper --cpufreq` / `--cpuusage` | ⚠️ 空行或只有表头（依赖 tty） |
+| `toybox top -n 1` | ✅ 任务数 / 内存 / Swap / CPU 各项占比 |
+
+#### 5.0.6 充电状态：daemon 根本读不到（重要结论）
+
+用户拔线后，「设备信息」里的电池立刻显示未充电，但上方 daemon 的「已插电」不变。
+
+**先说一个容易搞错的点**：插着 USB 且电量满时，`chargingStatus=3(FULL)` 而
+`pluggedType=2(USB)`。只看 chargingStatus 会显示"未充电"，看着像没插电。
+所以 App 侧拆成两个字段：`charging`（在充电）与 `plugged`（已插电），
+常亮判断用 `plugged`。
+
+**真正的问题**：daemon 侧拿不到充电状态，所有路径都封死：
+
+| 路径 | 结果 |
+|------|------|
+| `/sys/class/power_supply/*` | Permission denied |
+| `hidumper -s BatteryService -a -i` | 无 tty 只有表头（158 字节） |
+| `hidumper -s BatteryService -a -i --zip` | 产物在 `/data/log/hidumper/`，Permission denied |
+| `powermgr/BatteryInfo` 日志 | 环形缓冲区**仅约 2 分钟**（9000 行），事件早滚掉 |
+| `/data/log/hilog/*.gz` 持久日志 | 不是标准 gzip（magic 非 1f8b），解不开 |
+
+> 之前以为缓冲区有 20-25 分钟，是看错了：开头那条 `10-16` 只是环形缓冲区最老的
+> 一个槽位残留，正文其实只覆盖最近 1~2 分钟。
+
+**最终设计**：充电状态只认 App 的 `@ohos.batteryInfo`（可靠、3 秒一次心跳）。
+
+- 心跳新鲜（≤120 秒）→ 按 `config.charging` 判断
+- 心跳过期 → 判定 `unknown` → 不续期，让 override 在 10 分钟内自然过期
+
+代价：App 切后台后心跳立刻冻结（实测 50 秒纹丝不动），此时 daemon 无从判断。
+所以**切后台后最多维持 10 分钟**（实测：后台约 140 秒时 override 已自动撤销，
+回前台 16 秒内自动恢复）。这个取舍是刻意的：宁可功能慢一拍，也不能拔线后
+屏幕一直亮 —— 那正是这次被用户抓到的 bug。
+
+**顺带移除**：启动时不再继承状态文件里的充电状态。继承一个旧值（哪怕 5 分钟前）
+都可能让 daemon 误判在充电而无限续期。
+
 #### 5.0.1 排查"不熄屏"的两天踩坑记录
 
 用户反馈「关了充电不熄屏，手机还是不熄屏，怀疑卡在 24 小时」。
@@ -717,8 +788,13 @@ PowerManagerService）在 shell 权限下**只返回两行标题、零字段**�
       不再依赖 App 前台心跳（切后台即冻结）
 - [x] **常亮泄漏窗口从 24 小时压到 10 分钟**：override 设 10 分钟 + 每 5 分钟续期，
       daemon 意外退出后自愈
+- [x] **daemon 不再被卡死命令拖死**：执行改为后台 + 轮询 + 到点放弃（见 §5.0.5）
+- [x] **内存/CPU 改用无 tty 可用的数据源**：`/proc/meminfo`、`toybox top`（见 §5.0.5）
+- [x] **充电状态定源**：只认 App 原生 API 心跳，过期即撤销（见 §5.0.6）
 - [ ] **屏幕超时的精确回读**：目前只能记账（不依赖 tty 的读接口全被封）。
       若将来需要，可考虑扫 hilog 的 override 事件做外部变更检测
+- [ ] **后台维持常亮的取舍**：当前 App 切后台 10 分钟内会撤销。若要真正"后台也常亮"，
+      需要可靠的后台充电状态源（暂无），或改用长时任务（会常驻通知，语义也不合）
 
 ### 5.0.3 修复「指令偶尔提示响应超时」（2026-11-05）
 

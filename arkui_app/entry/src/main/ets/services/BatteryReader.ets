@@ -27,8 +27,17 @@ const TAG = 'BatteryReader';
 export interface BatterySnapshot {
   /** 电量百分比 0-100，-1 未知 */
   level: number;
-  /** 是否正在充电 */
+  /** 是否正在充电（chargingStatus=1 充电中 / 3 已充满） */
   charging: boolean;
+  /**
+   * 是否已插电（pluggedType ≠ 0）。
+   *
+   * 【为什么必须和 charging 分开】实测这台机器插着 USB 且电量满时，
+   * chargingStatus=3(FULL) 而 pluggedType=2(USB)。若只看 chargingStatus，
+   * 界面会显示"未充电"，看着像没插电 —— 用户就会以为是 bug。
+   * 而"充电时不熄屏"这个功能真正关心的是**有没有外部供电**，即 plugged。
+   */
+  plugged: boolean;
   /** 温度 °C，-1 未知 */
   temperature: number;
   /** 电压 V，-1 未知 */
@@ -52,11 +61,14 @@ export class BatteryReader {
 
       // BatteryChargeState: 0=NONE 1=ENABLE(充电中) 2=DISABLE(未充电) 3=FULL(充满)
       const charging = status === 1 || status === 3;
+      // BatteryPluggedType: 0=NONE 1=AC 2=USB 3=WIRELESS
+      const plugged = (batteryInfo.pluggedType as number) !== 0;
       const statusText = BatteryReader.chargeStateText(status);
 
       const snap: BatterySnapshot = {
         level: typeof soc === 'number' ? soc : -1,
         charging,
+        plugged,
         temperature: typeof tempRaw === 'number' && tempRaw !== 0 ? tempRaw / 10 : -1,
         voltage: typeof voltRaw === 'number' && voltRaw !== 0 ? voltRaw / 1000000 : -1,
         present,
@@ -71,7 +83,7 @@ export class BatteryReader {
     } catch (err) {
       hilog.error(DOMAIN, TAG, `read battery failed: ${err}`);
       return {
-        level: -1, charging: false, temperature: -1, voltage: -1,
+        level: -1, charging: false, plugged: false, temperature: -1, voltage: -1,
         present: false, plugType: '未知', health: '未知',
       };
     }

@@ -120,23 +120,16 @@ probe_system_state() {
     PROBE_TMP="${WORK_DIR}/.probe.tmp"
     hilog -x > "${PROBE_TMP}" 2>/dev/null
 
-    # 【关键：查不到不等于状态变了】
-    # 环形缓冲区实测只保留约 25 分钟（8000 行上下）。BatteryInfo 是事件驱动
-    # （插拔才打），插上电 25 分钟后那条日志就被挤掉了。如果这时把状态写成
-    # unknown，就会丢掉"已知在充电"这个有效信息 —— 所以只在**真的读到新行**
-    # 时才更新，读不到就沿用上一次的值。
+    # 【只探测屏幕亮灭，不在这里判断充电】
+    # 曾经想从 powermgr 的 BatteryInfo 日志里取 pluggedType，但那是个陷阱：
+    # 环形缓冲区实测只保留约 2 分钟（9000 行），而 BatteryInfo 是事件驱动
+    # （只有插拔才打），绝大多数时候根本不在缓冲区里。偶尔读到一次就当成
+    # 长期状态，会导致拔线后仍然常亮 —— 这正是用户实测到的问题。
+    # 所以充电状态只认 App 的原生 API 上报（见决策逻辑）。
     PROBE_LINE=$(grep 'screenOn:' "${PROBE_TMP}" 2>/dev/null | tail -n 1)
     case "${PROBE_LINE}" in
         *'screenOn:true'*)  SCREEN_LAST_ONOFF="on" ;;
         *'screenOn:false'*) SCREEN_LAST_ONOFF="off" ;;
-    esac
-
-    # 只取最后一条带 capacity 的 BatteryInfo 行，避免误抓 power_host 的同名日志
-    PROBE_PT=$(grep 'BatteryInfo: capacity' "${PROBE_TMP}" 2>/dev/null \
-        | grep -o 'pluggedType=[0-9]*' | tail -n 1)
-    case "${PROBE_PT}" in
-        pluggedType=0) CHARGING_STATE="no" ;;
-        pluggedType=*) CHARGING_STATE="yes" ;;
     esac
 
     rm -f "${PROBE_TMP}" 2>/dev/null
@@ -187,20 +180,12 @@ trap cleanup INT TERM
 # `timeout -r` 对它无效（详见 docs/TODO.md 5.0.4）。
 power-shell timeout -r >/dev/null 2>&1
 hidumper -s PowerManagerService -a -f >/dev/null 2>&1
-# 只在"上一次记录足够新"时才继承充电状态（≤10 分钟）。
-#
-# 为什么必须校验新鲜度：开机时状态文件里可能写着几小时前的 charging=yes，
-# 而用户早已拔线。若直接继承，daemon 会误以为在充电 → 一直续期 → 屏幕永不熄。
-# 宁可在这种拿不到证据的情况下认定为"未知"（决策层会退回 off），
-# 也不要赌一个过期的值 —— 屏幕不熄比功能暂时不生效严重得多。
-PREV_TS=$(read_state_val ts)
-NOW_TS=$(date +%s)
-if [ -n "${PREV_TS}" ] && [ $((NOW_TS - PREV_TS)) -le 600 ]; then
-    PREV_CHG=$(read_state_val charging)
-    [ -n "${PREV_CHG}" ] && CHARGING_STATE="${PREV_CHG}"
-    PREV_SCR=$(read_state_val screen)
-    [ -n "${PREV_SCR}" ] && SCREEN_LAST_ONOFF="${PREV_SCR}"
-fi
+# 【不继承充电状态】只继承"屏幕亮灭"这种无副作用的显示用值。
+# 充电状态一律由决策循环从 App 心跳重新判断：
+# 继承一个旧值（哪怕是 5 分钟前的 charging=yes）都可能让 daemon 误以为在充电，
+# 于是不断续期 → 屏幕永不熄。屏幕不熄比功能慢一拍严重得多。
+PREV_SCR=$(read_state_val screen)
+[ -n "${PREV_SCR}" ] && SCREEN_LAST_ONOFF="${PREV_SCR}"
 probe_system_state
 write_screen_state "0" "0"
 
@@ -403,13 +388,52 @@ run_and_reply() {
             ;;
     esac
 
-    # 【关键 1】stdin 重定向 /dev/null：防止 sqlite3 等交互式工具读 stdin 阻塞
-    # 【关键 2】timeout -k：20s 后 SIGTERM，再 5s 后 SIGKILL
-    #   仅 SIGTERM 不够 —— 实测 hidumper --mem | head 这类会忽略 TERM
-    #   注意：hidumper -c / hidumper --mem(无管道) 阻塞在内核态 Binder 调用，
-    #   连 SIGKILL 都无效，只能靠 App 层黑名单拦截
-    OUT=$(timeout -k "${CMD_TIMEOUT_KILL}" "${CMD_TIMEOUT_TERM}" sh -c "${CMD_STR}" 2>&1 < /dev/null)
-    RC=$?
+    # ---- 执行命令，且**绝不无限等待** ----
+    #
+    # 【为什么不能直接用 $(timeout ...)】
+    # 实测 `hidumper --mem` 阻塞在内核态 Binder 调用里，连 SIGKILL 都杀不死
+    # （PID 一直停在 R/D 状态，父进程变成 1）。此时 `$(...)` 会永远等下去，
+    # daemon 主循环就死在那一行 —— 用户看到的现象是：点了"内存"，
+    # 之后所有命令全部超时，整个 App 像卡死一样。
+    #
+    # 所以改成：后台跑 + 自己轮询 + 到点就放弃等待。
+    # 放弃时不 wait（避免被僵死子进程拖住），直接把超时结果返回给调用方。
+    # 被放弃的进程由系统回收（它的父进程会变成 1）。
+    OUT_TMP="${WORK_DIR}/.cmdout.tmp"
+    : > "${OUT_TMP}" 2>/dev/null
+
+    timeout -k "${CMD_TIMEOUT_KILL}" "${CMD_TIMEOUT_TERM}" \
+        sh -c "${CMD_STR}" > "${OUT_TMP}" 2>&1 < /dev/null &
+    CMD_PID=$!
+
+    # 轮询粒度 100ms，上限 CMD_WAIT_SECS（比 timeout 的 20+5 再宽 5 秒，
+    # 让 timeout 自己先出手；只有 timeout 也失效时我们才兜底放弃）
+    CMD_WAIT_SECS=30
+    WAITED=0
+    while [ "${WAITED}" -lt $((CMD_WAIT_SECS * 10)) ]; do
+        if ! kill -0 "${CMD_PID}" 2>/dev/null; then
+            break
+        fi
+        sleep 0.1
+        WAITED=$((WAITED + 1))
+    done
+
+    if kill -0 "${CMD_PID}" 2>/dev/null; then
+        # 到点还活着 —— 这是个杀不死的进程，放弃等待。
+        # 再用 -9 试一次（对多数情况有效，对 Binder 阻塞无效但无害）
+        kill -9 "${CMD_PID}" 2>/dev/null
+        RC=124
+        OUT=$(cat "${OUT_TMP}" 2>/dev/null)
+        OUT="${OUT}
+[!] 命令在 ${CMD_WAIT_SECS} 秒内未能结束，已放弃等待（进程可能阻塞在内核里，无法杀死）。
+[!] daemon 已恢复正常，可以继续执行其它命令。建议改用不依赖 hidumper 的查询方式。"
+    else
+        wait "${CMD_PID}" 2>/dev/null
+        RC=$?
+        OUT=$(cat "${OUT_TMP}" 2>/dev/null)
+    fi
+    rm -f "${OUT_TMP}" 2>/dev/null
+
     TS=$(date '+%Y-%m-%d %H:%M:%S')
 
     if [ -n "${REQ_ID}" ]; then
@@ -643,24 +667,30 @@ ${LINE}"
         if [ $((NOW - LAST_DECIDE)) -ge "${DECIDE_INTERVAL}" ]; then
             LAST_DECIDE="${NOW}"
             TOGGLE=$(cfg_bool stayAwakeWhileCharging)
-            CHG="${CHARGING_STATE}"
-            # 日志里读不到插拔事件时（缓冲区只有约 25 分钟），退回 App 上报值。
-            # 但必须校验心跳是否新鲜：App 切后台后心跳立刻冻结，一个几小时前的
-            # "charging:true" 若被当真，会导致拔线后仍然常亮。
-            if [ "${CHG}" = "unknown" ]; then
-                HB=$(cfg_num heartbeat)
-                NOW_HB=$(date +%s)
-                if [ -n "${HB}" ] && [ $((NOW_HB - HB)) -le 90 ]; then
-                    APP_CHG=$(cfg_bool charging)
-                    if [ "${APP_CHG}" = "true" ]; then
-                        CHG="yes"
-                    else
-                        CHG="no"
-                    fi
-                    # 把有效值记下来：状态文件要反映"实际依据"，也能跨重启继承
-                    CHARGING_STATE="${CHG}"
+
+            # 【唯一可信来源：App 的充电心跳】
+            # 实测 daemon 侧拿不到充电状态：
+            #   /sys/class/power_supply/*      -> Permission denied
+            #   /proc/loadavg、/proc/cpuinfo   -> Permission denied
+            #   hidumper -s BatteryService     -> 无 tty 只有表头
+            #   powermgr 的 BatteryInfo 日志   -> 环形缓冲区仅约 2 分钟，事件早就滚掉了
+            # 而 App 用 @ohos.batteryInfo 读 pluggedType 是可靠的，每 3 秒写一次心跳。
+            #
+            # 代价：App 切后台后心跳立刻冻结（实测 50 秒纹丝不动），此时 daemon
+            # 无从判断是否还插着电。所以心跳不新鲜就**判定为不应常亮**，
+            # 让 override 在 10 分钟内自然过期 —— 宁可功能暂时不生效，
+            # 也不能在拔线后让屏幕一直亮着（那正是之前被用户抓到的 bug）。
+            HB=$(cfg_num heartbeat)
+            NOW_HB=$(date +%s)
+            CHG="unknown"
+            if [ -n "${HB}" ] && [ $((NOW_HB - HB)) -le 120 ]; then
+                if [ "$(cfg_bool charging)" = "true" ]; then
+                    CHG="yes"
+                else
+                    CHG="no"
                 fi
             fi
+            CHARGING_STATE="${CHG}"
 
             SHOULD="no"
             if [ "${TOGGLE}" = "true" ] && [ "${CHG}" = "yes" ]; then
