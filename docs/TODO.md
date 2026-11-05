@@ -516,45 +516,56 @@ MDM Kit 里对应的接口是 `applicationManager.addDisallowedRunningBundlesSyn
 
 ### 5. 电池与电源策略深度联动（Battery & Power）
 
-#### 5.0 充电常亮：已改用 runningLock（2026-11-05 重构）
+#### 5.0 充电常亮：最终改用 window 常亮接口（2026-11-05 二次重构）
 
-**旧方案的三宗罪**：用 `power-shell timeout -o 86400000` 把屏幕超时改成 24 小时。
+**方案演进（三次，前两次都不对，记下来免得再走回头路）**
 
-1. **污染用户设置** —— 必须负责还原，还原失败就成"幽灵常亮"
-2. **精度差** —— 改的是绝对超时值，不是"条件性保持"
-3. **状态错乱** —— 和用户手动改设置互相覆盖
+| 方案 | 结果 | 问题 |
+|------|------|------|
+| `power-shell timeout -o 86400000` | 能用 | 污染用户设置、必须还原、还原失败就成"幽灵常亮" |
+| `runningLock` + `RunningLockType.BACKGROUND` | **完全无效** | 语义搞反了，见下 |
+| `window.setWindowKeepScreenOn()` | ✅ 实测生效 | 仅前台有效（窗口级） |
 
-**新方案**：`@ohos.runningLock`，加临时锁而不是改超时（对应 Android 的 wakelock 思路）。
+**为什么 `runningLock.BACKGROUND` 是无效实现**
 
-实测数据（真机 Pura 70 Pro+，用户设置 60 秒熄屏）：
+1. SDK 原文：`A lock that prevents the system from entering **sleep** mode when the
+   screen is off`，即"屏幕已经灭了，别让 CPU 睡"，跟"别让屏幕灭"正相反。
+2. 该枚举**自 API 10 起 deprecated**。
+3. `@ohos.runningLock` 对三方应用只有三个类型：`BACKGROUND` /
+   `PROXIMITY_SCREEN_CONTROL` / `BACKGROUND_USER_IDLE`（API 23+），**没有 SCREEN**。
 
-| 状态 | 静置 90 秒后 `screenOn:true` 记录 | 判定 |
-|------|--------------------------------|------|
-| 无锁 | 1 条（唤醒瞬间，随后消失） | ✅ 已熄屏 |
-| **持锁** | **2 条（每分钟持续出现）** | ✅ **一直亮着** |
-| 杀 App 释放锁 | 1 条 | ✅ 恢复正常熄屏 |
+之前误判为"有效"，是因为旧验证只看了 hilog 里 `screenOn:true` 的行数 ——
+那个判据会被「注视屏幕不熄屏」干扰，不能单独用来证明锁生效。真正的判据是
+`hidumper -s PowerManagerService -a -r` 里有没有本应用 uid 的 SCREEN 锁。
 
-**权限**：`ohos.permission.RUNNING_LOCK` 是 `availableLevel: normal` + `system_grant`，
-不是 MDM 那种受限 ACL，普通应用声明后能正常安装（对比 `ENTERPRISE_*` 会 9568289 装不上）。
+**正确实现（已真机实测）**：`window.setWindowKeepScreenOn(true/false)`
 
-**锁类型**：
+- @since 9，公开接口，**无需声明任何权限**
+- 系统在窗口维度挂一把 SCREEN 锁，锁名形如 `windowLock_<windowId>_<ts>`
+- 实测记录（真机 33Z0224430072393，开关在前台页面上）：
 
-| 类型 | isSupported | 说明 |
-|------|------------|------|
-| `BACKGROUND` | ✅ true | 屏幕关闭后系统不进入休眠 —— **本项目采用** |
-| `BACKGROUND_USER_IDLE` | ❌ false | 语义更贴切（用户空闲不自动休眠），但本机不支持，API 23+ |
+| 操作 | `SCREEN` 锁数量 | 新增的锁 |
+|------|----------------|----------|
+| 开关关 | 1 | —（只剩系统自己的） |
+| **开关开** | **2** | `type=SCREEN name=windowLock_1090_... uid=20020040 pid=3749`（窗口服务代持） |
+| 再关 | 1 | 已回收 ✅ |
 
-**实现要点**：
+**已知限制（必须在 UI 上说清，不能吹）**
 
-- `ScreenAwakeController.acquire(3600000)` —— 传 1 小时超时兜底，
-  即使 release 没被调用，锁也会自己过期，避免极端情况泄漏
+- 锁挂在窗口上：**App 退到后台 / 页面销毁即失效**，不是 Android 那种全设备级开关
+- 系统文档明确：检测到"非常规使用"（如无交互、非导航/视频/游戏场景）时，
+  **可能主动恢复自动熄屏**。这是平台策略，App 侧绕不过去
+
+**实现要点**
+
+- `ScreenAwakeController` 改为懒取主窗口：`window.getLastWindow(ctx)`，
+  页面 `aboutToAppear` 里 `bindWindow()` 注入，避免每次开关都异步取
 - 判断条件：`开关开 && 正在充电`，在 `tickCharge()` 里每 3 秒同步一次
-- **切后台时释放锁**：runningLock 的效果是系统级的，切后台仍然有效，
-  但此时 App 收不到定时器、无法感知"拔线"，锁会一直持到超时 —— 那就退回成幽灵常亮了
+- `onPageShow` 补一次 `syncAwakeLock()`：从后台回前台，窗口锁已被系统回收，
+  不补这一下会出现"开关是开的但没生效"
 - daemon 侧的 `check_stay_awake()` **已整体移除**，只保留启动时的
   `power-shell timeout -r` 兜底清理（清掉旧版本可能残留的 override）
 
-**代价**：锁是 App 侧持有的，App 被杀就释放。但这反而是更安全的行为。
 
 #### 5.0.1 排查"不熄屏"的两天踩坑记录
 
@@ -655,7 +666,9 @@ PowerManagerService）在 shell 权限下**只返回两行标题、零字段**�
 - [x] 工程目录统一为 `arkui_app`（下划线命名，Windows/macOS 通用）
 - [x] 修复 daemon 幽灵常亮、多行命令截断、`.gitattributes` 强制 LF
 - [x] **修复「偶发响应超时」**（2026-11-05，详见下方说明）
-- [x] **充电常亮改用 runningLock**（见 §5.0），daemon 侧旧逻辑已移除
+- [x] **充电常亮改用 `window.setWindowKeepScreenOn`**（见 §5.0；`runningLock.BACKGROUND` 是无效实现，已废弃），daemon 侧旧逻辑已移除
+- [ ] **系统的 `PowerMgrKeepOnLock` 无法由 App 清除**（见 §5.0.4）——
+      需要用户在开发者选项里关「保持唤醒状态」或拔线
 
 ### 5.0.3 修复「指令偶尔提示响应超时」（2026-11-05）
 
@@ -687,6 +700,41 @@ PowerManagerService）在 shell 权限下**只返回两行标题、零字段**�
 **实测验证**：App 终端里执行 `sleep 8; echo SLOWOK`，12 秒后正常返回 `SLOWOK`，
 不再误报超时。
 
+
+#### 5.0.4 系统自己的常亮锁：`PowerMgrKeepOnLock`（重要，别背锅）
+
+把开关关掉后屏幕**仍然**不熄，一度以为是我们没释放锁。实测排除了自己：
+
+```
+$ hidumper -s PowerManagerService -a -r
+  SCREEN: 1
+  index=1 type=SCREEN name=PowerMgrKeepOnLock uid=5528 pid=1502 state=1
+$ aa force-stop com.octahedron.hmpriv        # 把我们 App 彻底杀掉
+$ hidumper -s PowerManagerService -a -r       # 锁仍在，纹丝不动
+```
+
+- `uid=5528 pid=1502` = **powermgr 自己**（`ps -ef` 里 `powermgr 1502 1 1`），
+  不是任何第三方 App；`aa force-stop` 杀不掉它
+- 状态机里 DIM 的失败原因直接写着 `Blocked by running lock`
+  （`hidumper -s PowerManagerService -a -s`）
+- 系统超时本身是好的：`ScreenOffTime: Timeout=60000ms`，说明旧版 24 小时
+  override 已被 daemon 启动时的 `timeout -r` 清干净
+
+**推断来源**：设置 → 系统 → 开发者选项 →「保持唤醒状态（充电时屏幕不休眠）」。
+该选项由电源服务内部持锁实现（所以归属 powermgr），且**只在插电时生效**。
+本机 `pluggedType=2`（USB）、`chargingStatus=3`（已充满）—— 一直在充电，
+所以这把锁一直挂着。
+
+**排查顺序（下次再遇到别急着改代码）**
+
+1. `hidumper -s PowerManagerService -a -r` 看有没有 `PowerMgrKeepOnLock`
+   —— 有就说明是系统级常亮，跟 App 无关
+2. `aa force-stop <本应用>` 再 dump 一次，确认不是自己
+3. `hidumper -s PowerManagerService -a -s` 看 `ScreenOffTime` 和 DIM 失败原因
+4. 让用户拔掉充电线（或关掉开发者选项那一项）复测
+
+**注意**：`hidumper -s PowerManagerService -a -t`（帮助里写"keep screen on"）
+实测**没有任何效果**，别拿它当解法。
 
 ### 待办
 - [ ] **daemon 保活**：系统回收后需手动重启，App 内应能一键重新部署

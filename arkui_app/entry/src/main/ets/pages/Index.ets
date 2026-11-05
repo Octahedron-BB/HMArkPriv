@@ -26,6 +26,7 @@ import { ResponseParser } from '../utils/ResponseParser';
 import { CommandResult } from '../model/CommandResult';
 import { DEFAULT_BUS_DIR } from '../common/Constants';
 import { common } from '@kit.AbilityKit';
+import { window } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 
 @Entry
@@ -66,30 +67,36 @@ struct Index {
     });
     // 兜底：如果监听注册前就已有 pending，主动读一次
     this.syncPending();
+    // 把主窗口交给常亮控制器：setWindowKeepScreenOn 是窗口级 API。
+    // 幂等调用（真正的 keepScreenOn 由 syncAwakeLock 按开关状态决定）。
+    const ctx = getContext(this) as common.UIAbilityContext;
+    window.getLastWindow(ctx).then((w: window.Window) => {
+      ScreenAwakeController.bindWindow(w);
+    }).catch((err: Error) => {
+      hilog.error(0x9201, 'Index', `bindWindow failed: ${err.message}`);
+    });
     this.initBusDir();
   }
 
   aboutToDisappear(): void {
     this.stopChargeReporting();
-    // 页面销毁时释放锁，避免锁泄漏
+    // 页面销毁时撤销常亮，避免窗口被系统回收后还残留意图
     ScreenAwakeController.release();
   }
 
   /** 页面可见时开始上报充电状态（切后台就停） */
   onPageShow(): void {
     this.startChargeReporting();
+    // 从后台回前台要把常亮状态重新同步一次（后台期间窗口不可见，锁会被系统回收）
+    this.syncAwakeLock();
   }
 
   /**
-   * 切后台时停止上报并释放锁。
+   * 切后台时停止上报并释放常亮。
    *
-   * 【为什么切后台要释放】
-   * runningLock 的效果是系统级的，切后台仍然有效，但此时 App 已经收不到
-   * 定时器，无法感知"拔掉充电器"这类变化，锁会一直持有到超时（1 小时），
-   * 那就退回成"幽灵常亮"了。宁可切后台后不常亮，也不要失控。
-   *
-   * 如果将来需要"后台也维持"，得改用长时任务（BackgroundTaskManager），
-   * 而鸿蒙的长时任务类型里没有"保持屏幕常亮"这一类。
+   * setWindowKeepScreenOn 是**窗口级**的：窗口不可见时锁自然失效，所以这里
+   * 显式撤销一次，保证「回前台」时 syncAwakeLock 的判断（isHeld）与实际一致，
+   * 不会因为状态错乱导致开关打开却没生效。
    */
   onPageHide(): void {
     this.stopChargeReporting();
@@ -131,30 +138,30 @@ struct Index {
   }
 
   /**
-   * 同步「充电常亮」的运行锁。
+   * 同步「充电常亮」的窗口常亮状态。
    *
-   * 【为什么改用 runningLock 而不是 power-shell timeout】
-   * 旧实现是把屏幕超时改成 24 小时，有三个问题：污染用户设置、必须负责还原、
-   * 还原失败就成"幽灵常亮"。runningLock 加的是临时锁，unhold() 后立刻恢复
-   * 用户原本的超时设置，全程不碰 settings。
+   * 【实现演进（两次都踩了坑，记下来免得再走回头路）】
+   * 1) 最早用 `power-shell timeout -o 86400000`：把屏幕超时改成 24 小时。
+   *    能用，但污染用户设置、必须负责还原，还原失败就成"幽灵常亮"。
+   * 2) 改成 `runningLock` + `RunningLockType.BACKGROUND`：以为加了临时锁，
+   *    实际是**无效实现** —— 该类型是"屏幕灭了别让系统睡"，不是"别让屏幕灭"，
+   *    而且自 API 10 起已废弃，三方应用也拿不到 SCREEN 类型。调用不报错，
+   *    所以肉眼看着像"生效"，实际 `hidumper -r` 里根本没有我们这把锁。
+   * 3) 现在用 `window.setWindowKeepScreenOn()`：系统唯一面向三方应用的常亮
+   *    接口，窗口维度持锁，窗口消失由系统回收，不碰用户设置也不留残锁。
    *
-   * 实测（详见 docs/TODO.md 5.0.1）：持锁静置 90 秒屏幕不熄，
-   * 杀掉 App 释放锁后 90 秒内正常熄屏。
-   *
-   * 【代价】锁是 App 侧持有的，App 被杀就释放。但这反而是更安全的行为 ——
-   * 不会像旧方案那样在 App 消失后残留 24 小时常亮。
+   * 【限制】窗口不可见即失效（切后台不常亮）；系统检测到"非常规使用"
+   * 时有权恢复自动熄屏（如长时间无交互），这是平台策略。
    */
   syncAwakeLock(): void {
     const shouldHold = this.stayAwakeWhileCharging && this.isCharging;
     if (shouldHold && !ScreenAwakeController.isHeld()) {
-      // 传一个较长超时兜底：即使 release 没被调用，锁也会自己过期，
-      // 防止极端情况下（进程被杀但锁未释放）导致长时间常亮。
-      ScreenAwakeController.acquire(3600000).then((ok: boolean) => {
-        hilog.info(0x9201, 'Index', `awake lock acquire = ${ok}`);
+      ScreenAwakeController.acquire().then((ok: boolean) => {
+        hilog.info(0x9201, 'Index', `keepScreenOn acquire = ${ok}`);
       });
     } else if (!shouldHold && ScreenAwakeController.isHeld()) {
       ScreenAwakeController.release().then((ok: boolean) => {
-        hilog.info(0x9201, 'Index', `awake lock release = ${ok}`);
+        hilog.info(0x9201, 'Index', `keepScreenOn release = ${ok}`);
       });
     }
   }
@@ -365,30 +372,28 @@ struct Index {
   /**
    * 切换「充电时不熄屏」。
    *
-   * 旧实现用 hilog 抓 pluggedType 判断充电状态 —— 实测该字段在鸿蒙 hilog 里
-   * 恒不存在，所以开了也不生效、关了也可能残留 24 小时常亮。
-   *
-   * 现在：开关只写配置，充电状态由 tickCharge() 定时上报，
-   * daemon 读 config 幂等切换。这里额外做一次立即同步，避免等 3 秒。
+   * 开关本身只负责记账（写 preferences），真正的常亮由 syncAwakeLock() 依
+   * 「开关 && 正在充电」去调 setWindowKeepScreenOn。这里额外做一次立即同步，
+   * 免得等 3 秒的充电状态轮询才生效。
    */
   async toggleStayAwakeWhileCharging(isOn: boolean): Promise<void> {
     this.stayAwakeWhileCharging = isOn;
     const busDir = this.busClient.getBusDir();
     TrustManager.setStayAwakeWhileCharging(isOn, busDir);
 
-    // 立即同步锁状态，不等 3 秒轮询 —— 用户点了就该马上有反馈
+    // 立即同步，不等 3 秒轮询 —— 用户点了就该马上有反馈
     this.syncAwakeLock();
 
     if (!isOn) {
-      // 兼容：清掉旧方案可能残留的 timeout override（幂等，没有就返回 failed）
+      // 兼容老版本：清掉历史上可能残留的 timeout override（幂等，没有就无效返回）
       await this.busClient.execute('power-shell timeout -r');
-      this.lastResult = '已关闭「充电时不熄屏」：已释放保持亮屏的锁。';
+      this.lastResult = '已关闭「充电时不熄屏」：已撤销窗口常亮，恢复系统熄屏设置。';
       return;
     }
 
     this.lastResult = this.isCharging
-      ? '已开启「充电时不熄屏」：当前正在充电，已保持亮屏。拔出充电器后自动恢复。'
-      : '已开启「充电时不熄屏」：当前未充电，插入充电器后自动保持亮屏。';
+      ? '已开启「充电时不熄屏」：正在充电，本页面内保持亮屏。切到后台或离开本页面后失效。'
+      : '已开启「充电时不熄屏」：当前未充电，插入充电器后保持亮屏。';
   }
 
   /** 电池：走原生 API（hidumper -s BatteryService 实测拿不到数据） */
@@ -896,7 +901,7 @@ struct Index {
                 .fontColor('#E2E8F0')
                 .fontWeight(FontWeight.Medium)
               Text(this.stayAwakeWhileCharging
-                ? (this.isCharging ? '已开启 · 正在充电，保持常亮' : '已开启 · 未充电，插电后生效')
+                ? (this.isCharging ? '已开启 · 正在充电，本页面保持常亮' : '已开启 · 未充电，插电后生效')
                 : '已关闭（遵循系统熄屏设置）')
                 .fontSize(10)
                 .fontColor(this.stayAwakeWhileCharging
@@ -921,8 +926,8 @@ struct Index {
         .margin({ bottom: 8 })
 
         Text(this.stayAwakeWhileCharging
-          ? '插上充电器后屏幕不自动熄灭。切到后台会停止维持（否则无法感知拔线，可能一直亮）。'
-          : '鸿蒙开发者选项里已移除「充电时不锁屏」，此开关是本项目的替代实现。')
+          ? '用系统窗口常亮接口实现，只在 HMArkPriv 处于前台时有效（切后台由系统回收）。系统判定为非常规使用时可能强制恢复自动熄屏。'
+          : '鸿蒙开发者选项里的「保持唤醒状态」是系统级的（插电就一直亮）；此开关是本项目的替代实现，范围仅限本页面。')
           .fontSize(10)
           .fontColor('#475569')
           .lineHeight(15)
