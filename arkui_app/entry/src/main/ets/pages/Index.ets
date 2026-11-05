@@ -1039,7 +1039,7 @@ struct Index {
             .fontColor(this.daemonCharging === 'yes'
               ? '#4ADE80'
               : (this.daemonCharging === 'no' ? '#64748B' : '#475569'))
-          Text(' · 依据 App 原生 API，本 App 切后台后无法继续判断')
+          Text(' · 依据 App 原生 API；切后台后沿用最后状态，最多 30 分钟')
             .fontSize(10)
             .fontColor('#475569')
         }
@@ -1050,8 +1050,8 @@ struct Index {
         .margin({ bottom: 8 })
 
         Text(this.stayAwakeWhileCharging
-          ? '由常驻 daemon 执行：本 App 在前台时持续维持常亮，拔线后约 10 秒撤销。'
-          : '开关打开后，插着充电器时屏幕不再自动熄灭。超时覆盖设为 10 分钟并每 5 分钟续期，所以 daemon 意外退出时最多多亮 10 分钟就自行恢复。')
+          ? '在前台时实时跟随插拔（拔线约 10 秒内撤销）。切到后台后沿用最后状态最多 30 分钟，之后自动撤销，不会一直残留。'
+          : '开关打开后，插着充电器时屏幕不再自动熄灭。超时覆盖设为 10 分钟并每 5 分钟续期：daemon 万一退出，最多多亮 10 分钟就自行恢复。')
           .fontSize(10)
           .fontColor('#475569')
           .lineHeight(15)

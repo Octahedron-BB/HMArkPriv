@@ -75,6 +75,10 @@ STAY_AWAKE_MS=600000          # 10 分钟：override 单次上限
 PROBE_INTERVAL=30             # 每 30 秒探测屏幕与充电
 DECIDE_INTERVAL=10            # 每 10 秒决策一次（要不要开/关）
 RENEW_INTERVAL=300            # 每 5 分钟续期一次
+# App 切后台后心跳会冻结。此时允许"沿用最后一次已知的插电状态"多久。
+# 用户明确表示：拔线后短暂残留可以接受，只要不会一直残留。
+# 30 分钟 + override 自身 10 分钟过期，即 App 后台化后最多 40 分钟必定自愈。
+CHG_GRACE=1800
 
 # 【为什么用秒数而不是循环计数】
 # 主循环写的是 `sleep 0.05`，但每次迭代还要做文件探测、槽位扫描，
@@ -207,6 +211,7 @@ printf '{"framework":"HMArkPriv","status":"ready","pid":%d,"uid":%d}\n' "$$" "$(
 LAST_REQ_ID=""
 FREEZE_CHECK_COUNTER=39
 TICK_GATE=0
+LAST_CHG_TS=""
 LAST_PROBE=0
 LAST_DECIDE=0
 LAST_RENEW=0
@@ -682,15 +687,31 @@ ${LINE}"
             # 也不能在拔线后让屏幕一直亮着（那正是之前被用户抓到的 bug）。
             HB=$(cfg_num heartbeat)
             NOW_HB=$(date +%s)
-            CHG="unknown"
             if [ -n "${HB}" ] && [ $((NOW_HB - HB)) -le 120 ]; then
+                # 心跳新鲜：以 App 上报为准（这是唯一实时可靠的来源）
                 if [ "$(cfg_bool charging)" = "true" ]; then
-                    CHG="yes"
+                    CHARGING_STATE="yes"
                 else
-                    CHG="no"
+                    CHARGING_STATE="no"
+                fi
+                LAST_CHG_TS="${NOW_HB}"
+            else
+                # 心跳过期：App 已切后台，无从得知当前是否还插着电。
+                #
+                # 【为什么沿用旧值而不是立刻判 unknown】
+                # 用户的诉求是"拔线后短暂残留可以，但不能一直残留"。
+                # 立刻判 unknown 会让常亮在 App 一切后台就失效，等于功能只在
+                # 前台可用；而无限沿用又会出现"拔线后屏幕永不熄"。
+                # 折中：沿用最后一次已知状态，但设一个硬上限 CHG_GRACE。
+                # 超过上限就判 unknown，override 随之停止续期并自然过期。
+                if [ -n "${LAST_CHG_TS}" ] \
+                    && [ $((NOW_HB - LAST_CHG_TS)) -le "${CHG_GRACE}" ]; then
+                    : # 保留 CHARGING_STATE 上一次的值（宽限期内）
+                else
+                    CHARGING_STATE="unknown"
                 fi
             fi
-            CHARGING_STATE="${CHG}"
+            CHG="${CHARGING_STATE}"
 
             SHOULD="no"
             if [ "${TOGGLE}" = "true" ] && [ "${CHG}" = "yes" ]; then
@@ -700,14 +721,30 @@ ${LINE}"
             OV=$(read_state_val override)
             [ -z "${OV}" ] && OV=0
 
+            WROTE=0
             if [ "${SHOULD}" = "yes" ]; then
                 if [ "${OV}" != "1" ]; then
                     stay_awake_on
+                    WROTE=1
                 fi
             else
                 if [ "${OV}" = "1" ]; then
                     # 拔线 / 关开关 → 立刻撤销，不等 override 自己过期
                     stay_awake_off
+                    WROTE=1
+                fi
+            fi
+
+            # 【即使动作没变也刷新状态文件】
+            # 界面上"充电"这一栏读的是状态文件。以前只有真正切换 override 时才写，
+            # 于是开关处于关闭状态时，拔线后要等到 30 秒一次的探测周期才刷新 ——
+            # 用户实测能明显感知到这段滞后（"过一段时间变为未插电"）。
+            # 决策循环是 10 秒一轮，在这里补写一次，把感知延迟压到 10 秒内。
+            if [ "${WROTE}" != "1" ]; then
+                if [ "${OV}" = "1" ]; then
+                    write_screen_state "1" "${STAY_AWAKE_MS}"
+                else
+                    write_screen_state "0" "0"
                 fi
             fi
         fi
