@@ -120,11 +120,15 @@ probe_system_state() {
     PROBE_TMP="${WORK_DIR}/.probe.tmp"
     hilog -x > "${PROBE_TMP}" 2>/dev/null
 
+    # 【关键：查不到不等于状态变了】
+    # 环形缓冲区实测只保留约 25 分钟（8000 行上下）。BatteryInfo 是事件驱动
+    # （插拔才打），插上电 25 分钟后那条日志就被挤掉了。如果这时把状态写成
+    # unknown，就会丢掉"已知在充电"这个有效信息 —— 所以只在**真的读到新行**
+    # 时才更新，读不到就沿用上一次的值。
     PROBE_LINE=$(grep 'screenOn:' "${PROBE_TMP}" 2>/dev/null | tail -n 1)
     case "${PROBE_LINE}" in
         *'screenOn:true'*)  SCREEN_LAST_ONOFF="on" ;;
         *'screenOn:false'*) SCREEN_LAST_ONOFF="off" ;;
-        *)                  SCREEN_LAST_ONOFF="unknown" ;;
     esac
 
     # 只取最后一条带 capacity 的 BatteryInfo 行，避免误抓 power_host 的同名日志
@@ -133,7 +137,6 @@ probe_system_state() {
     case "${PROBE_PT}" in
         pluggedType=0) CHARGING_STATE="no" ;;
         pluggedType=*) CHARGING_STATE="yes" ;;
-        *)             CHARGING_STATE="unknown" ;;
     esac
 
     rm -f "${PROBE_TMP}" 2>/dev/null
@@ -184,7 +187,21 @@ trap cleanup INT TERM
 # `timeout -r` 对它无效（详见 docs/TODO.md 5.0.4）。
 power-shell timeout -r >/dev/null 2>&1
 hidumper -s PowerManagerService -a -f >/dev/null 2>&1
-probe_screen
+# 只在"上一次记录足够新"时才继承充电状态（≤10 分钟）。
+#
+# 为什么必须校验新鲜度：开机时状态文件里可能写着几小时前的 charging=yes，
+# 而用户早已拔线。若直接继承，daemon 会误以为在充电 → 一直续期 → 屏幕永不熄。
+# 宁可在这种拿不到证据的情况下认定为"未知"（决策层会退回 off），
+# 也不要赌一个过期的值 —— 屏幕不熄比功能暂时不生效严重得多。
+PREV_TS=$(read_state_val ts)
+NOW_TS=$(date +%s)
+if [ -n "${PREV_TS}" ] && [ $((NOW_TS - PREV_TS)) -le 600 ]; then
+    PREV_CHG=$(read_state_val charging)
+    [ -n "${PREV_CHG}" ] && CHARGING_STATE="${PREV_CHG}"
+    PREV_SCR=$(read_state_val screen)
+    [ -n "${PREV_SCR}" ] && SCREEN_LAST_ONOFF="${PREV_SCR}"
+fi
+probe_system_state
 write_screen_state "0" "0"
 
 # Single instance enforcement
@@ -627,10 +644,22 @@ ${LINE}"
             LAST_DECIDE="${NOW}"
             TOGGLE=$(cfg_bool stayAwakeWhileCharging)
             CHG="${CHARGING_STATE}"
-            # hilog 里读不到充电事件时（缓冲区没这行），退回 App 上报的值
+            # 日志里读不到插拔事件时（缓冲区只有约 25 分钟），退回 App 上报值。
+            # 但必须校验心跳是否新鲜：App 切后台后心跳立刻冻结，一个几小时前的
+            # "charging:true" 若被当真，会导致拔线后仍然常亮。
             if [ "${CHG}" = "unknown" ]; then
-                APP_CHG=$(cfg_bool charging)
-                [ "${APP_CHG}" = "true" ] && CHG="yes"
+                HB=$(cfg_num heartbeat)
+                NOW_HB=$(date +%s)
+                if [ -n "${HB}" ] && [ $((NOW_HB - HB)) -le 90 ]; then
+                    APP_CHG=$(cfg_bool charging)
+                    if [ "${APP_CHG}" = "true" ]; then
+                        CHG="yes"
+                    else
+                        CHG="no"
+                    fi
+                    # 把有效值记下来：状态文件要反映"实际依据"，也能跨重启继承
+                    CHARGING_STATE="${CHG}"
+                fi
             fi
 
             SHOULD="no"
