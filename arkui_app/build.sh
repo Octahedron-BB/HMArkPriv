@@ -40,9 +40,38 @@ fi
 
 cd "$(dirname "$0")"
 
+# ------------------------------------------------------------------------------
+# 本机签名配置注入
+#
+# 仓库里的 build-profile.json5 故意不含 signingConfigs（证书路径和口令只对
+# 本机有意义，提交进公开仓库没有价值还泄露信息）。
+# 需要真机签名时，把配置写进 build-profile.local.json5（已被 gitignore），
+# 这里临时覆盖后构建，退出时还原。
+# ------------------------------------------------------------------------------
+LOCAL_PROFILE="build-profile.local.json5"
+RESTORE_NEEDED=0
+
+restore_profile() {
+  if [ "$RESTORE_NEEDED" = "1" ] && [ -f build-profile.json5.bak ]; then
+    mv -f build-profile.json5.bak build-profile.json5 2>/dev/null
+    RESTORE_NEEDED=0
+  fi
+}
+trap restore_profile EXIT INT TERM
+
+if [ -f "$LOCAL_PROFILE" ]; then
+  echo "[*] 检测到本机签名配置，临时注入..."
+  cp build-profile.json5 build-profile.json5.bak
+  RESTORE_NEEDED=1
+  cp "$LOCAL_PROFILE" build-profile.json5
+else
+  echo "[*] 未找到 $LOCAL_PROFILE，按无签名配置构建（真机需自行签名）"
+fi
+
 if [ "$1" = "clean" ]; then
   echo "[*] 清理构建产物..."
   "$NODE_EXE" "$HVIGOR_JS" --mode module -p product=default --no-daemon clean
+  restore_profile
   echo "[*] 清理完成"
   exit 0
 fi
@@ -54,5 +83,9 @@ echo ""
 echo "[*] 构建完成，产物："
 find entry/build -name "*.hap" -exec ls -lh {} \;
 echo ""
-echo "[!] 注意：命令行构建产出的是 unsigned HAP。"
-echo "    模拟器可直接 hdc install；真机需在 DevEco Studio 里配置自动签名。"
+if [ "$RESTORE_NEEDED" = "1" ]; then
+  echo "[✓] 已使用 $LOCAL_PROFILE 签名，构建后已还原仓库版配置。"
+else
+  echo "[!] 未配置本机签名，产物中是 unsigned HAP。"
+  echo "    模拟器可直接 hdc install；真机请配置 $LOCAL_PROFILE（见文件内说明）。"
+fi

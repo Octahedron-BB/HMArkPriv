@@ -1,24 +1,22 @@
 {
+  // ============================================================================
+  // 这是仓库版配置 —— 故意不含 signingConfigs。
+  //
+  // 【为什么】
+  // 签名配置里含本机证书的绝对路径和加密后的口令，对别人毫无用处
+  // （p12/cer/p7b 都在各自机器的 ~/.ohos/config 下），提交进公开仓库只是泄露信息。
+  //
+  // 【怎么用】
+  // - 只跑模拟器 / 只要 unsigned HAP：直接 ./build.sh，无需任何签名配置。
+  // - 真机安装：把签名配置写到同目录的 build-profile.local.json5
+  //   （该文件已被 .gitignore 忽略），build.sh 会自动用它覆盖本文件再构建，
+  //   构建结束后还原。也可以直接在 DevEco Studio 里点「自动签名」，让它写进本文件，
+  //   但提交前记得把 signingConfigs 段删掉。
+  // ============================================================================
   "app": {
-    "signingConfigs": [
-      {
-        "name": "default",
-        "type": "HarmonyOS",
-        "material": {
-          "certpath": "/Users/octahedronbb/.ohos/config/default_arkui_app_-P7gjrx4OY9IDUtfpnY182Wt0JeXHnfz3Rsz1F2CJOY=.cer",
-          "keyAlias": "debugKey",
-          "keyPassword": "0000001BC1F45F7D604C13ED56069F926222F835BE87FF195AB9CEB80F3E29D7AA3FEB4716D348FF047BF6",
-          "profile": "/Users/octahedronbb/.ohos/config/default_arkui_app_-P7gjrx4OY9IDUtfpnY182Wt0JeXHnfz3Rsz1F2CJOY=.p7b",
-          "signAlg": "SHA256withECDSA",
-          "storeFile": "/Users/octahedronbb/.ohos/config/default_arkui_app_-P7gjrx4OY9IDUtfpnY182Wt0JeXHnfz3Rsz1F2CJOY=.p12",
-          "storePassword": "0000001B42C22C7674E25820FF3FFAA4CF3D957B0A680C3A292F6D1F095BF7FE7E979030745A11448453F1"
-        }
-      }
-    ],
     "products": [
       {
         "name": "default",
-        "signingConfig": "default",
         "compatibleSdkVersion": "26.0.0",
         "targetSdkVersion": "26.0.0",
         "runtimeOS": "HarmonyOS",

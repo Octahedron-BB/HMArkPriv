@@ -54,17 +54,32 @@ hdc shell "cat /storage/media/100/local/files/Docs/Download/HMArkPriv/status.jso
 
 ### 2. 编译并安装 App
 
-进入 `arkui_app` 目录：
+进入 `arkui_app` 目录，直接跑 `./build.sh`（会自动定位 DevEco Studio 与 JDK）：
+
+```bash
+cd arkui_app
+./build.sh
+# 产物：
+#   entry/build/default/outputs/default/entry-default-unsigned.hap
+#   entry/build/default/outputs/default/entry-default-signed.hap（配置了本机签名时才有）
+```
 
 - **模拟器调试**（免签名直接安装）：
   ```bash
-  cd arkui_app
-  export DEVECO_SDK_HOME="/Applications/DevEco-Studio.app/Contents/sdk" # Mac 路径，按实际配置
-  /Applications/DevEco-Studio.app/Contents/tools/hvigor/bin/hvigorw --mode module -p product=default assembleHap --no-daemon
   hdc install -r entry/build/default/outputs/default/entry-default-unsigned.hap
   ```
-- **真机安装**：
-  在 DevEco Studio 中打开 `arkui_app` 目录，进入 `File -> Project Structure -> Signing Configs` 勾选 **Automatically generate signature**（自动签名），然后点击 Run 或使用命令行打包安装签名的 `entry-default-signed.hap`：
+- **真机安装**（需要签名）：
+
+  仓库里的 `build-profile.json5` **故意不含签名配置** —— 证书路径和加密口令只对
+  各自机器有意义，提交进公开仓库既没用又泄露信息。请自行创建
+  `arkui_app/build-profile.local.json5`（已被 `.gitignore` 忽略），
+  内容模板见该文件内的注释；`build.sh` 检测到它就会临时注入，构建完自动还原。
+
+  最省事的做法：在 DevEco Studio 里打开 `arkui_app`，
+  `File → Project Structure → Signing Configs` 勾选
+  **Automatically generate signature**（需登录华为账号并连真机），
+  然后把生成的 `signingConfigs` 段拷进 `build-profile.local.json5`。
+
   ```bash
   hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
   ```
