@@ -285,6 +285,33 @@ App 功能恢复正常。激活/解除可反复进行，`onAdminDisabled` 回调
 **如果将来想重试**，完整步骤是把上面 ①③④ 重做一遍（约 40 行代码），
 但除非拿到企业 MDM 证书，⑦ 依然是死路。
 
+#### 4.2.2 验证「重新自动签名能否补上权限」——不能（2026-11-05）
+
+有一种设想：在 `module.json5` 里声明 `ENTERPRISE_MANAGE_APPLICATION`，
+然后让 DevEco 重新自动签名，AGC 或许会把它加进 ACL。**实测否定。**
+
+步骤：临时声明该权限 + 加回扩展能力 → 用户在 DevEco 重新自动签名 → 解析新 `.p7b` → 构建 → 安装。
+
+| 环节 | 结果 |
+|------|------|
+| 证书重新生成 | ✅ 时间戳从 10:00:27 变为 **10:03:57**，确实是新签的 |
+| `allowed-acls` 是否包含目标权限 | ❌ **没有**。仍是 `[FILE_ACCESS_PERSIST, READ_WRITE_DOWNLOAD_DIRECTORY]` |
+| `apl` | ❌ 仍是 `normal` |
+| `app-feature` | ❌ 仍是 `hos_normal_app` |
+| 构建 | ✅ BUILD SUCCESSFUL（签名环节不拦） |
+| 安装到设备 | ❌ `code:9568289 grant request permissions failed`，与之前完全一致 |
+
+**结论**：AGC 在签发 profile 时会按账号类型和应用类型**静默过滤**掉超出等级的权限，
+不会报错，只是不写进 ACL。签名能过、装不上 —— 拦截点在设备端安装校验。
+
+这也解释了为什么之前那份 profile 只带 2 个 ACL 权限：
+它们都是 `availableLevel: normal`，与 `apl: normal` 匹配，所以被放行。
+
+**要改变结果只有一条路**：把 AGC 上的应用类型从普通应用改为 MDM 应用，
+这需要企业开发者账号 + 资质审核，不是靠重新签名能绕过的。
+
+（实验后已回滚：`module.json5` 与组件代码还原，重新构建安装，App 恢复正常。）
+
 **再退一步：就算拿到证书，API 效果也存疑**
 
 MDM Kit 里对应的接口是 `applicationManager.addDisallowedRunningBundlesSync`
