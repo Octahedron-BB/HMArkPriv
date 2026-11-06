@@ -128,19 +128,24 @@ read_state_val() {
 }
 
 # ------------------------------------------------------------------------------
-# 一次性探测：屏幕亮灭 + 充电状态
+# 探测：屏幕亮灭 + 充电状态
 #
-# 只 dump 一次 hilog 到临时文件，再分别 grep —— 比调两次省一半开销
-# （hilog -x 单次约 310ms，全量 9000 行）。
+# 【性能】用 `hilog -x -e <regex>` 让 hilog 自己过滤，不再全量 dump 到临时文件。
+# 这不只是省 CPU：全量一次约 1MB（8000 行），30 秒一轮 = 每天往闪存写约 2.9GB，
+# 常驻运行几个月就是实打实的磨损。改成正则过滤后写入量降到几乎为零。
 #
 # 数据源一：屏幕亮灭（sceneboard，约每分钟一行）
 #   ClockData: needUpdateLockTime screenOn:true|false
 #
-# 数据源二：充电状态（powermgr，事件驱动，插拔时才打）
+# 数据源二：充电状态（powermgr，**每 30 秒一行**，不是只在插拔时打）
 #   BatteryInfo: capacity=100, ..., pluggedType=2, ...
-#   pluggedType=0 表示未插电。这是 daemon **唯一**能拿到充电状态的途径：
+#   pluggedType=0 表示未插电。这是 daemon 唯一能拿到充电状态的途径：
 #   /sys/class/power_supply 被 SELinux 拒绝，hidumper -s BatteryService 的输出
-#   在没有 tty 时只有表头（158 字节）。日志缓冲区实测跨 20 天不滚动，足够可靠。
+#   在没有 tty 时只有表头（158 字节）。
+#
+# 【缓冲区】core 环形缓冲区默认只有 512KB，会被光感/亮度这类高频日志反复冲掉，
+# 导致 30 秒一轮的轮询也可能刚好捞不到那行（这就是之前误判"日志不可靠"的原因）。
+# 启动时用 `hilog -G 4M -t core` 扩到 4MB 兜住这个窗口。
 # ------------------------------------------------------------------------------
 probe_system_state() {
     # ---- 1) 屏幕亮灭（sceneboard，过滤 screenOn）----
@@ -205,7 +210,12 @@ trap cleanup INT TERM
 # `timeout -r` 对它无效（详见 docs/TODO.md 5.0.4）。
 power-shell timeout -r >/dev/null 2>&1
 hidumper -s PowerManagerService -a -f >/dev/null 2>&1
-# 扩大 core 日志缓冲区到 4MB，防止环境光/传感器日志冲刷 powermgr 事件
+# 扩大 core 日志缓冲区到 4MB，防止环境光/传感器日志冲刷 powermgr 的 BatteryInfo 行。
+#
+# 【注意这是设备级设置】`hilog -G` 改的是 hilogd 的全局缓冲区，不只影响本进程，
+# 且 daemon 退出后**不会自动恢复**（重启后回默认）。代价是常驻多占约 3.5MB 内存，
+# 换来的是插拔电检测不再被日志冲刷影响。若将来想彻底不碰系统状态，
+# 可改为只在探测失败时临时扩大、用完还原。
 hilog -G 4M -t core >/dev/null 2>&1 || true
 # 【不继承充电状态】只继承"屏幕亮灭"这种无副作用的显示用值。
 # 充电状态一律由决策循环从 App 心跳重新判断：
@@ -430,10 +440,25 @@ run_and_reply() {
     OUT_TMP="${WORK_DIR}/.cmdout.tmp"
     : > "${OUT_TMP}" 2>/dev/null
 
-    # 注意：必须用 `(${CMD_STR}) | cat` 管道，不能直接把 stdout 重定向到普通文件。
-    # 鸿蒙 `bm dump` 会检查 stdout 的 fstat，若为普通文件会直接返回 0 字节，管道才能正常捕获。
+    # 【必须用管道】鸿蒙 `bm dump` 会检查 stdout 的 fstat，若为普通文件直接返回 0 字节，
+    # 只有管道才能正常捕获（应用列表为空、报"未找到匹配的应用"就是这个问题）。
+    #
+    # 【但管道会吞掉退出码】POSIX 里 `(cmd) | cat` 的状态是**最后一个命令**（cat）的，
+    # 也就是恒为 0。实测：`sh -c "(exit 3) | cat"` 返回 0。
+    # 这会让所有失败命令都显示成功（TerminalConsole 不打印 [exit: N]、
+    # BusClient.success 恒为 true、外部调用方拿到的 exitCode 恒为 0）。
+    #
+    # 解法：在子 shell 里紧跟命令把真实 `$?` 打成一行标记，让它随管道一起流进
+    # 输出文件，父进程读完再抠出来并从正文里删掉。这样既保留管道，又保住退出码，
+    # 且不依赖 pipefail / PIPESTATUS（设备 sh 都不支持）。
+    # 注意必须用**子 shell** `( ... )` 而不是 `{ ... }`：
+    # 命令里若有 `exit N`，用 `{ }` 会把整个 sh 直接结束，标记来不及打印，
+    # 退出码就丢了（实测 `{ exit 3; }` 拿不到 3）。子 shell 里 exit 只退子 shell。
+    RC_MARK="__HM_RC__"
     timeout -k "${CMD_TIMEOUT_KILL}" "${CMD_TIMEOUT_TERM}" \
-        sh -c "(${CMD_STR}) | cat" > "${OUT_TMP}" 2>&1 < /dev/null &
+        sh -c "( ${CMD_STR}
+); __hm_rc=\$?; printf '%s%s\\n' ${RC_MARK} \"\$__hm_rc\"" \
+        2>&1 | cat > "${OUT_TMP}" 2>&1 < /dev/null &
     CMD_PID=$!
 
     # 轮询粒度 100ms，上限 CMD_WAIT_SECS（比 timeout 的 20+5 再宽 5 秒，
@@ -448,21 +473,40 @@ run_and_reply() {
         WAITED=$((WAITED + 1))
     done
 
+    TIMED_OUT=0
     if kill -0 "${CMD_PID}" 2>/dev/null; then
         # 到点还活着 —— 这是个杀不死的进程，放弃等待。
         # 再用 -9 试一次（对多数情况有效，对 Binder 阻塞无效但无害）
         kill -9 "${CMD_PID}" 2>/dev/null
-        RC=124
-        OUT=$(cat "${OUT_TMP}" 2>/dev/null)
+        TIMED_OUT=1
+    else
+        wait "${CMD_PID}" 2>/dev/null
+    fi
+
+    OUT=$(cat "${OUT_TMP}" 2>/dev/null)
+    rm -f "${OUT_TMP}" 2>/dev/null
+
+    # 从正文尾部抠出真实退出码；抠不到（被超时杀掉）就退回超时语义
+    RC_LINE=$(printf '%s\n' "${OUT}" | grep -o "${RC_MARK}[0-9]*" | tail -n 1)
+    if [ -n "${RC_LINE}" ]; then
+        RC=${RC_LINE#${RC_MARK}}
+        OUT=$(printf '%s\n' "${OUT}" | sed "s/${RC_MARK}[0-9]*//")
+        # 去掉标记被删后可能残留的空行尾（不影响语义，仅清爽）
+        OUT=$(printf '%s' "${OUT}")
+    else
+        # 没有标记 = 进程被我们放弃等待（或 sh 自己异常退出）→ 按超时处理
+        if [ "${TIMED_OUT}" = "1" ]; then
+            RC=124
+        else
+            RC=0
+        fi
+    fi
+
+    if [ "${TIMED_OUT}" = "1" ]; then
         OUT="${OUT}
 [!] 命令在 ${CMD_WAIT_SECS} 秒内未能结束，已放弃等待（进程可能阻塞在内核里，无法杀死）。
 [!] daemon 已恢复正常，可以继续执行其它命令。建议改用不依赖 hidumper 的查询方式。"
-    else
-        wait "${CMD_PID}" 2>/dev/null
-        RC=$?
-        OUT=$(cat "${OUT_TMP}" 2>/dev/null)
     fi
-    rm -f "${OUT_TMP}" 2>/dev/null
 
     TS=$(date '+%Y-%m-%d %H:%M:%S')
 
@@ -798,8 +842,9 @@ ${LINE}"
             log_transition "${CHARGING_STATE}" "$(read_state_val override)"
         fi
 
-        # 续期：值 10 分钟、每 5 分钟续一次，只要 daemon 活着就永不过期；
-        # daemon 一死，最多 10 分钟自愈。
+        # 【兜底续期】决策循环在 SHOULD=yes 时已每 10 秒续一次，这里只是双保险：
+        # 万一某轮决策因异常没跑到，5 分钟内还会补一次，不至于让 override 过期。
+        # 保留它不影响性能（5 分钟一次），删掉也行。
         if [ $((NOW - LAST_RENEW)) -ge "${RENEW_INTERVAL}" ]; then
             LAST_RENEW="${NOW}"
             if [ "$(read_state_val override)" = "1" ]; then
