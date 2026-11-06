@@ -148,15 +148,24 @@ read_state_val() {
 # 启动时用 `hilog -G 4M -t core` 扩到 4MB 兜住这个窗口。
 # ------------------------------------------------------------------------------
 probe_system_state() {
-    # ---- 1) 屏幕亮灭（sceneboard，过滤 screenOn）----
-    PROBE_LINE=$(hilog -x -e 'screenOn:' 2>/dev/null | tail -n 1)
+    # 【每个 hilog 都必须套 timeout】
+    #
+    # 实测事故：daemon 启动后一次请求都没处理过，cmd.res 永远是初始化时写的
+    # "Server Ready"，wchan 停在 do_rt_sigsuspend。此时设备上同时有 3 个 hilog
+    # 客户端在跑（其中一个是没带 -x 的流式订阅），而 hilogd 对并发客户端是串行的
+    # —— 我们的 `hilog -x` 就被堵在锁上，主循环再也走不动。
+    #
+    # 这类外部命令一律不能裸调。超时后保留上一次的值，宁可状态旧一点，
+    # 也不能让整个 daemon 停在探测这一步。
+    # 正常耗时约 2~3 秒，给 10 秒已经非常宽松。
+    PROBE_LINE=$(timeout -k 2 10 hilog -x -e 'screenOn:' 2>/dev/null | tail -n 1)
     case "${PROBE_LINE}" in
         *'screenOn:true'*)  SCREEN_LAST_ONOFF="on" ;;
         *'screenOn:false'*) SCREEN_LAST_ONOFF="off" ;;
     esac
 
     # ---- 2) 充电状态（powermgr/BatteryInfo，精准正则过滤，避免全量 dump 闪存磨损与缓冲区冲刷）----
-    PROBE_PT=$(hilog -x -e 'capacity' 2>/dev/null \
+    PROBE_PT=$(timeout -k 2 10 hilog -x -e 'capacity' 2>/dev/null \
         | grep 'BatteryInfo: capacity' | grep -o 'pluggedType=[0-9]*' | tail -n 1)
     case "${PROBE_PT}" in
         pluggedType=0) LOG_CHG="no" ;;
@@ -216,7 +225,7 @@ hidumper -s PowerManagerService -a -f >/dev/null 2>&1
 # 且 daemon 退出后**不会自动恢复**（重启后回默认）。代价是常驻多占约 3.5MB 内存，
 # 换来的是插拔电检测不再被日志冲刷影响。若将来想彻底不碰系统状态，
 # 可改为只在探测失败时临时扩大、用完还原。
-hilog -G 4M -t core >/dev/null 2>&1 || true
+timeout 10 hilog -G 4M -t core >/dev/null 2>&1 || true
 # 【不继承充电状态】只继承"屏幕亮灭"这种无副作用的显示用值。
 # 充电状态一律由决策循环从 App 心跳重新判断：
 # 继承一个旧值（哪怕是 5 分钟前的 charging=yes）都可能让 daemon 误以为在充电，
@@ -455,10 +464,14 @@ run_and_reply() {
     # 命令里若有 `exit N`，用 `{ }` 会把整个 sh 直接结束，标记来不及打印，
     # 退出码就丢了（实测 `{ exit 3; }` 拿不到 3）。子 shell 里 exit 只退子 shell。
     RC_MARK="__HM_RC__"
+    # 【`< /dev/null` 必须在 sh 这一侧，不能写在 cat 后面】
+    # 写成 `sh -c "..." 2>&1 | cat > f < /dev/null` 时，那个重定向作用于 cat，
+    # 会把 cat 的 stdin 从管道换成 /dev/null，于是读到空 → 输出全丢。
+    # 正确写法：sh 吃 /dev/null（防交互命令阻塞读 stdin），输出走管道给 cat。
     timeout -k "${CMD_TIMEOUT_KILL}" "${CMD_TIMEOUT_TERM}" \
         sh -c "( ${CMD_STR}
 ); __hm_rc=\$?; printf '%s%s\\n' ${RC_MARK} \"\$__hm_rc\"" \
-        2>&1 | cat > "${OUT_TMP}" 2>&1 < /dev/null &
+        < /dev/null 2>&1 | cat > "${OUT_TMP}" &
     CMD_PID=$!
 
     # 轮询粒度 100ms，上限 CMD_WAIT_SECS（比 timeout 的 20+5 再宽 5 秒，
