@@ -95,6 +95,7 @@ LOG_CHG="unknown"
 # 本次判定用了哪个来源：log / app / none（写进状态文件便于排查）
 CHG_SRC="none"
 LAST_LOGGED=""
+LAST_PS_REFRESH=0
 
 #   $1 = override（0/1）  $2 = timeout 毫秒
 write_screen_state() {
@@ -203,6 +204,68 @@ stay_awake_off() {
     write_screen_state "0" "0"
 }
 
+# ------------------------------------------------------------------------------
+# 看门狗：主循环卡死时自动重启自己
+#
+# 【为什么需要】这个 daemon 已经两次被"杀不掉的外部命令"卡死：
+#   - hidumper --mem（卡在内核 Binder，SIGKILL 无效）
+#   - ps -ef（设备深睡眠时卡进 D 状态，timeout 的 SIGKILL 同样无效）
+# 每次都只能靠电脑 hdc 手动重启。代码层面能修的已经修了，但 sh 里没法
+# 保证"任何情况下都不卡" —— 所以加一个外部守护兜底。
+#
+# 机制：主循环每约 1~2 秒刷新心跳文件；watchdog 每 20 秒检查一次，
+# 超过 90 秒没更新就认定卡死，kill -9 后重新拉起 daemon。
+# 90 秒这个阈值远大于正常轮询间隔（<2 秒）和探测耗时（约 3 秒），
+# 不会误杀；又足够短，用户基本感知不到异常。
+# ------------------------------------------------------------------------------
+HEARTBEAT_FILE="${WORK_DIR}/.heartbeat"
+WATCHDOG_LOG="${WORK_DIR}/watchdog.log"
+# 用 $0 拿脚本自身路径（最可靠）。若是相对路径则用 WORK_DIR 补全，
+# 这样不论部署在 ${WORK_DIR}/daemon.sh 还是 ${WORK_DIR}/core/daemon.sh 都能重启自己。
+DAEMON_SELF="$0"
+case "${DAEMON_SELF}" in
+    /*) : ;;
+    *)  DAEMON_SELF="${WORK_DIR}/${DAEMON_SELF}" ;;
+esac
+
+start_watchdog() {
+    # 已有 watchdog 在跑就退出（避免多实例叠加）
+    [ -f "${WORK_DIR}/.wd.pid" ] || : > "${WORK_DIR}/.wd.pid" 2>/dev/null
+    OLD_WD=$(timeout 2 cat "${WORK_DIR}/.wd.pid" 2>/dev/null)
+    if [ -n "${OLD_WD}" ] && kill -0 "${OLD_WD}" 2>/dev/null; then
+        return 0
+    fi
+
+    (
+        printf '%s' "$$" > "${WORK_DIR}/.wd.pid" 2>/dev/null
+        DAEMON_PID="$$"
+        while true; do
+            sleep 20
+            # 主进程已退出 → watchdog 也该退出，让位给下一个
+            kill -0 "${DAEMON_PID}" 2>/dev/null || exit 0
+
+            HB=$(timeout 2 cat "${HEARTBEAT_FILE}" 2>/dev/null)
+            NOW_WD=$(date +%s 2>/dev/null)
+            [ -z "${NOW_WD}" ] && continue
+            [ -z "${HB}" ] && continue
+
+            AGE=$((NOW_WD - HB))
+            if [ "${AGE}" -gt 90 ]; then
+                printf '%s heartbeat stale %ss, restarting daemon\n' \
+                    "$(date '+%Y-%m-%d %H:%M:%S')" "${AGE}" >> "${WATCHDOG_LOG}" 2>/dev/null
+                kill -9 "${DAEMON_PID}" 2>/dev/null
+                sleep 2
+                # 清掉单实例锁，否则新进程会拒绝启动
+                rm -f "${PID_FILE}" 2>/dev/null
+                nohup sh "${DAEMON_SELF}" >> "${WORK_DIR}/daemon.log" 2>&1 &
+                printf '%s restarted pid=%s\n' \
+                    "$(date '+%Y-%m-%d %H:%M:%S')" "$!" >> "${WATCHDOG_LOG}" 2>/dev/null
+                exit 0
+            fi
+        done
+    ) &
+}
+
 # 状态恢复与清理
 cleanup() {
     power-shell timeout -r >/dev/null 2>&1
@@ -249,6 +312,11 @@ echo $$ > "${PID_FILE}"
 printf "" > "${REQ_FILE}" 2>/dev/null
 printf "ID:init RC:0 TIME:0\nHMArkPriv Shell Server Ready\n" > "${RES_FILE}" 2>/dev/null
 printf '{"framework":"HMArkPriv","status":"ready","pid":%d,"uid":%d}\n' "$$" "$(id -u)" > "${STATUS_FILE}" 2>/dev/null
+
+# 写一次心跳，然后启动看门狗
+printf '%s' "$(date +%s 2>/dev/null)" > "${HEARTBEAT_FILE}" 2>/dev/null
+HEARTBEAT_LAST=""
+start_watchdog
 
 LAST_REQ_ID=""
 FREEZE_CHECK_COUNTER=39
@@ -496,7 +564,11 @@ run_and_reply() {
         wait "${CMD_PID}" 2>/dev/null
     fi
 
-    OUT=$(cat "${OUT_TMP}" 2>/dev/null)
+    # 【读输出必须带超时】这里曾经是第二次死锁点：
+    # 命令卡在 D 状态时，管道写入端（cat > OUT_TMP）不会关闭，
+    # 裸 `cat` 会一直等 EOF，daemon 随之永久阻塞。
+    # 加 timeout 后，最坏情况只是这一条命令的输出丢掉，主循环照常前进。
+    OUT=$(timeout 3 cat "${OUT_TMP}" 2>/dev/null)
     rm -f "${OUT_TMP}" 2>/dev/null
 
     # 从正文尾部抠出真实退出码；抠不到（被超时杀掉）就退回超时语义
@@ -578,13 +650,39 @@ check_frozen() {
     # 【性能】名单为空时零开销 —— 用户不用这个功能就完全不付出代价
     [ -s "${FROZEN_FILE}" ] || return 0
 
-    # 一次进程快照，避免在名单循环里反复 fork ps。
-    # 实测 ps -ef 本身约 100ms（300+ 进程），是这里的主要成本，
-    # 所以扫描频率定在 2 秒一次（约 5% CPU），而不是 1 秒。
+    # 【绝不在这里同步等 ps】实测事故（2026-11-06）：
+    # 一次 `ps -ef` 在设备深睡眠时卡进 D 状态（读 /proc 阻塞），
+    # timeout 的 SIGKILL 对 D 状态进程无效，于是整条 `$(...)` 永久等下去，
+    # daemon 卡死 5.5 小时，所有命令无响应。
     #
-    # 末列是进程名；应用子进程形如 "包名:进程名"，用 cut 取冒号前的主包名。
-    # 不做 sort -u：grep -qxF 不要求有序，去重只是浪费一次 fork。
-    RUNNING=$(ps -ef 2>/dev/null | sed 's/.* //' | cut -d: -f1)
+    # 改成后台刷新 + 读上一份快照：
+    #   - ps 永远在后台跑，主循环绝不阻塞
+    #   - 读文件也套 timeout，万一写入端没关也只是丢一份快照
+    # 代价是快照最多滞后一个刷新周期（这里定 5 秒，冻结本就是"1 秒内杀掉"的弱保证）。
+    RUNNING_SNAP="${WORK_DIR}/.running.tmp"
+    NOW_PS=$(date +%s 2>/dev/null)
+    [ -z "${NOW_PS}" ] && NOW_PS=0
+
+    if [ $((NOW_PS - LAST_PS_REFRESH)) -ge 5 ]; then
+        LAST_PS_REFRESH="${NOW_PS}"
+        # 已有刷新在跑就不叠加（避免卡死时不断堆积 ps 进程）
+        if [ ! -f "${WORK_DIR}/.ps.busy" ]; then
+            : > "${WORK_DIR}/.ps.busy" 2>/dev/null
+            (
+                timeout -k 2 10 ps -ef 2>/dev/null \
+                    | sed 's/.* //' | cut -d: -f1 > "${RUNNING_SNAP}.new" 2>/dev/null
+                if [ -s "${RUNNING_SNAP}.new" ]; then
+                    mv -f "${RUNNING_SNAP}.new" "${RUNNING_SNAP}" 2>/dev/null
+                fi
+                rm -f "${WORK_DIR}/.ps.busy" 2>/dev/null
+            ) &
+        fi
+    fi
+
+    # 用上一份快照做判断；读也套 timeout，防止写入端未关闭。
+    # 末列是进程名；应用子进程形如 "包名:进程名"，cut 取冒号前的主包名。
+    [ -f "${RUNNING_SNAP}" ] || return 0
+    RUNNING=$(timeout 2 cat "${RUNNING_SNAP}" 2>/dev/null)
     [ -z "${RUNNING}" ] && return 0
 
     HIT=0
@@ -730,6 +828,13 @@ ${LINE}"
     if [ "${TICK_GATE}" -ge 20 ]; then
         TICK_GATE=0
         NOW=$(date +%s)
+
+        # 刷新心跳（秒变化时才写，避免频繁 IO）。
+        # 看门狗靠它判断主循环是否还活着。
+        if [ "${NOW}" != "${HEARTBEAT_LAST}" ]; then
+            HEARTBEAT_LAST="${NOW}"
+            printf '%s' "${NOW}" > "${HEARTBEAT_FILE}" 2>/dev/null
+        fi
 
         # 探测：屏幕亮灭 + 充电状态（一次 hilog dump 拿两个信息）
         if [ $((NOW - LAST_PROBE)) -ge "${PROBE_INTERVAL}" ]; then
