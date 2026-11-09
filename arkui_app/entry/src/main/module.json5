@@ -26,6 +26,25 @@
         ]
       }
     ],
+    "extensionAbilities": [
+      {
+        // 【探针】验证普通三方应用（apl=normal）能否收到无障碍事件。
+        // type 必须是 "accessibility"；srcEntry 指向继承 AccessibilityExtensionAbility 的类。
+        // 用户在「设置 → 辅助功能 → 无障碍」里手动启用后才会被拉起。
+        "name": "AdProbeAbility",
+        "srcEntry": "./ets/adprobe/AdProbeAbility.ets",
+        "type": "accessibility",
+        "exported": true,
+        "label": "$string:adprobe_label",
+        "description": "$string:adprobe_desc",
+        "metadata": [
+          {
+            "name": "ohos.accessibleability",
+            "resource": "$profile:adprobe_config"
+          }
+        ]
+      }
+    ],
     "requestPermissions": [
       {
         "name": "ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY",

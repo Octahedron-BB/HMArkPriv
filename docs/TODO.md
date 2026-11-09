@@ -1045,6 +1045,62 @@ kill -0 "${OLD_WD}" && return 0            # daemon 活着 → 判定"watchdog �
 **冻结实际早就停了**。用户感知"还好用"，是因为期间没有真正去打开那个被冻结的
 `com.huawei.hmos.ouc`；App 界面里的冻结列表只是文件内容，不代表实时生效。
 
+#### 5.0.11 无障碍扩展实测：结构性不可用（2026-11-09）
+
+为了给"广告跳过"找毫秒级的事件通道，测试了 `AccessibilityExtensionAbility`。结论是
+**方向对但此路不通**，且阻碍有两层。
+
+**第一层：扩展能被系统识别（好消息）**
+
+```ts
+// module.json5 里 type: "accessibility" 对 apl=normal 完全合法，编译安装都正常
+accessibility.getAccessibilityExtensionListSync('all', 'install')
+→ 7 个：cardistributedassist / hicar×2 / screenreader / screenshot / vassistant / 我们
+```
+
+`com.octahedron.hmpriv ability=AdProbeAbility` 与华为自家扩展并列，说明**注册没问题**。
+系统里还有 `SimulateClickAccessibilityAbility`（华为官方模拟点击），证明这条通道是
+真实的产品级能力。但 `enable 列表 = 0`、`isOpenAccessibility = false`。
+
+**第二层：无法启用，且这是硬墙（决定性证据）**
+
+试了 10 条路，全部失败：
+
+| # | 尝试 | 结果 |
+|---|------|------|
+| 1 | 读 `/data/service/el{1,2}/*/accessibility` | Permission denied |
+| 2 | `sqlite3` 直连 settings 库 | unable to open database |
+| 3 | `param set accessibility.config.state` | errNum 1001（权限不足）|
+| 4 | 设置里搜「无障碍」「无障碍服务」「屏幕朗读」「辅助」 | 只返回「关怀和无障碍」「无障碍快捷键」|
+| 5 | 翻遍「关怀和无障碍」所有子页 | 只有关怀模式/视觉辅助/听觉辅助/交互控制，**无服务列表** |
+| 6 | 启动 `AccessibilityShortKeyDialog` 等 4 个对话框 Ability | 均无反应 |
+| 7 | 启动 screenreader 的 `MainAbility` / `UIExtAbility` / `ScreenReaderServiceExtAbility` | 全部重定向回设置 |
+| 8 | 模拟长按音量上+下（无障碍快捷键） | 无对话框 |
+| 9 | `aa start --ps route/page/settings.route`、`-U settings://accessibility` | 页面不变 |
+| 10 | **声明 `ohos.permission.ACCESSIBILITY_EXTENSION_ABILITY`** | **安装直接失败** |
+
+第 10 条是关键：
+
+```
+code:9568289 error: install failed due to grant request permissions failed.
+PermissionName: ohos.permission.ACCESSIBILITY_EXTENSION_ABILITY
+```
+
+这个权限是 `system_basic` + ACL 保护，调试证书（apl=normal）的 Profile 里不含任何 ACL，
+所以**连声明都不允许**。也就是说即使用户能在设置里看到那个列表，我们的扩展也无法被
+授权——UI 缺失只是表象，权限天花板才是根因。
+
+**要真正用上，需要**：system_basic 及以上的 apl + AGC 审核通过的 ACL 白名单。
+我们之前实测过 AGC 会静默过滤 `ENTERPRISE_*` 的 apl 提升请求，这条同样走不通。
+
+**保留的代码**：`ets/adprobe/AdProbeAbility.ets` + `module.json5` 的 extensionAbilities
++ `Index.ets` 的 `probeAccessibility()`。留着是因为它不产生副作用（扩展不会被拉起），
+且若将来华为放开策略或拿到系统级签名，可以直接复用验证。要清理时删这三处即可。
+
+**对广告跳过的结论**：只能走 shell 路线（`hilog -x -e 'StartAbility'` 流式 + 
+`uitest dumpLayout`），首次可点击约 1.5 秒。下一阶段应先实测"跳过按钮多久出现"，
+如果广告 SDK 本身要求用户看 3 秒才显示跳过，1.5 秒的检测延迟就不吃亏。
+
 ### 5.0.3 修复「指令偶尔提示响应超时」（2026-11-05）
 
 用户反馈「试了几个指令，偶尔好用，偶尔就提示响应超时」。

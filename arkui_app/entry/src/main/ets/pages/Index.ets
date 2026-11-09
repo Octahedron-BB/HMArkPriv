@@ -14,6 +14,7 @@
 import { BusClient } from '../services/BusClient';
 import { BusDirManager } from '../services/BusDirManager';
 import { BatteryReader } from '../services/BatteryReader';
+import { accessibility } from '@kit.AccessibilityKit';
 import { BatteryWatcher } from '../services/BatteryWatcher';
 import { TerminalConsole } from '../components/TerminalConsole';
 import { DaemonStatusCard } from '../components/DaemonStatusCard';
@@ -66,6 +67,8 @@ struct Index {
   /** daemon 记账：是否处于超时覆盖（常亮）状态 */
   @State screenOverride: boolean = false;
   /** daemon 记账：override 的具体毫秒值 */
+  /** 无障碍诊断是否已跑过（只跑一次） */
+  private accProbed: boolean = false;
   @State screenOverrideMs: number = 0;
   /** daemon 探测到的屏幕亮灭（on / off / unknown） */
   @State screenRealState: string = 'unknown';
@@ -140,6 +143,14 @@ struct Index {
     const snap = BatteryReader.read();
     this.isCharging = snap.plugged;
     TrustManager.reportCharging(snap.plugged, dir);
+    // 【探针配套】预创建 adprobe.log —— hmdfs 目录不允许无障碍扩展新建文件，
+    // 但允许写已存在的文件。这里由 App（有 WRITE_MEDIA）先建好，扩展只负责追加。
+    this.ensureProbeLog(dir);
+    // 【诊断】只在启动后首次执行，避免每秒刷日志
+    if (!this.accProbed) {
+      this.accProbed = true;
+      this.probeAccessibility();
+    }
     // 【诊断】订阅系统电量广播，验证切后台后回调是否仍触发（幂等，只订阅一次）
     BatteryWatcher.start(dir);
     // 顺带维护「充电常亮」状态；并刷新 daemon 记录的真实状态。
@@ -187,6 +198,63 @@ struct Index {
       this.awakeApplied = '';
       hilog.error(0x9201, 'Index', `screen ${cmd} failed: ${e.message}`);
     });
+  }
+
+  /**
+   * 确保无障碍探针的日志文件存在。
+   * 只创建一次（accessSync 命中即返回），开销可忽略。
+   */
+  private ensureProbeLog(dir: string): void {
+    if (!dir || dir.length === 0) {
+      return;
+    }
+    const path = `${dir}/adprobe.log`;
+    try {
+      if (fileIo.accessSync(path)) {
+        return;
+      }
+      const f = fileIo.openSync(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE);
+      fileIo.writeSync(f.fd, `# HMArkPriv accessibility probe\n`);
+      fileIo.closeSync(f);
+      hilog.info(0x9201, 'Index', `created probe log: ${path}`);
+    } catch (e) {
+      hilog.warn(0x9201, 'Index', `ensureProbeLog failed: ${e}`);
+    }
+  }
+
+  /**
+   * 【诊断】查询系统对无障碍扩展的认知状态。
+   *
+   * 这一步是判定可行性最可靠的证据：
+   *   - getAccessibilityExtensionListSync('all','install') 里有我们 → 系统认了这个扩展
+   *   - isOpenAccessibilitySync() 为 false      → 无障碍总开关没开
+   * 结果写进 adprobe.log，同时打到 hilog。
+   */
+  private probeAccessibility(): void {
+    let lines: string[] = [];
+    try {
+      lines.push(`isOpenAccessibility = ${accessibility.isOpenAccessibilitySync()}`);
+    } catch (e) {
+      lines.push(`isOpenAccessibility 失败: ${e}`);
+    }
+    try {
+      const installed = accessibility.getAccessibilityExtensionListSync('all', 'install');
+      lines.push(`install 列表数量 = ${installed.length}`);
+      for (const a of installed) {
+        lines.push(`  bundle=${a.bundleName} ability=${a.name}`);
+      }
+    } catch (e) {
+      lines.push(`getExtensionList(install) 失败: ${e}`);
+    }
+    try {
+      const enabled = accessibility.getAccessibilityExtensionListSync('all', 'enable');
+      lines.push(`enable 列表数量 = ${enabled.length}`);
+    } catch (e) {
+      lines.push(`getExtensionList(enable) 失败: ${e}`);
+    }
+    for (const l of lines) {
+      hilog.info(0x9201, 'AccProbe', l);
+    }
   }
 
   /**

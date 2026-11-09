@@ -11,5 +11,8 @@
     { "name": "tab_apps", "value": "应用" },
     { "name": "tab_touch", "value": "触控" },
     { "name": "tab_system", "value": "系统" }
+  ,
+    { "name": "adprobe_label", "value": "HMArkPriv 无障碍探针" },
+    { "name": "adprobe_desc", "value": "用于验证无障碍事件能否被第三方应用接收" }
   ]
 }
