@@ -43,6 +43,16 @@
             "resource": "$profile:adprobe_config"
           }
         ]
+      },
+      {
+        // 【探针】验证第三方应用能否收到其他应用的通知。
+        // type 必须是 "notificationSubscriber"，配合 NotificationSubscriberExtensionAbility。
+        "name": "NotifyProbeAbility",
+        "srcEntry": "./ets/notifyprobe/NotifyProbeAbility.ets",
+        "type": "notificationSubscriber",
+        "exported": true,
+        "label": "$string:notifyprobe_label",
+        "description": "$string:notifyprobe_desc"
       }
     ],
     "requestPermissions": [

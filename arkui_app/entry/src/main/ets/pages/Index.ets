@@ -15,6 +15,7 @@ import { BusClient } from '../services/BusClient';
 import { BusDirManager } from '../services/BusDirManager';
 import { BatteryReader } from '../services/BatteryReader';
 import { accessibility } from '@kit.AccessibilityKit';
+import { NotifySubscriber } from '../notifyprobe/NotifyProbeAbility';
 import { BatteryWatcher } from '../services/BatteryWatcher';
 import { TerminalConsole } from '../components/TerminalConsole';
 import { DaemonStatusCard } from '../components/DaemonStatusCard';
@@ -255,6 +256,29 @@ struct Index {
     for (const l of lines) {
       hilog.info(0x9201, 'AccProbe', l);
     }
+    this.probeNotification();
+  }
+
+  /**
+   * 【诊断】通知订阅能力探测。
+   *
+   * 扩展已注册成功（bm dump 能看到 notificationSubscriber），但权限
+   * SUBSCRIBE_NOTIFICATION 是 system_basic + ACL，声明即安装失败。
+   * 这里在"没声明权限"的情况下调用 API，看运行时给什么错误码：
+   *   201 → 权限确实在运行时也拦，彻底无解
+   *   其它 → 也许有别的入口
+   */
+  private probeNotification(): void {
+    NotifySubscriber.isGranted().then((r: string) => {
+      hilog.info(0x9202, 'NotifyProbe', `isGranted: ${r}`);
+    }).catch((e: Error) => {
+      hilog.warn(0x9202, 'NotifyProbe', `isGranted threw: ${e.message}`);
+    });
+    NotifySubscriber.grantedBundles().then((r: string) => {
+      hilog.info(0x9202, 'NotifyProbe', `bundles: ${r}`);
+    }).catch((e: Error) => {
+      hilog.warn(0x9202, 'NotifyProbe', `bundles threw: ${e.message}`);
+    });
   }
 
   /**

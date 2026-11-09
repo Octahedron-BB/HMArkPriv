@@ -1287,6 +1287,96 @@ dumpLayout → sed 拆节点 → grep '"text":"跳过"' → 取 bounds → 算�
 `hdc file send local.txt /path/target.log` 会在设备上**创建一个名为 target.log 的目录**，
 不是文件。必须先在本地把文件名改成目标名，再 `file send local_name /dir/`。
 
+#### 5.0.15 通知读取：API 被权限墙封死，UI 抓取可行（2026-11-09）
+
+用户问"有办法获取到全部通知吗"（与通知转发器项目相关）。做了完整调研 + 实测。
+
+**结论：两条路，一条死一条通。**
+
+**路一：NotificationSubscriberExtensionAbility —— 死路**
+
+SDK 里确实有完整能力（`@ohos.notificationExtensionSubscription`，since 22）：
+
+```ts
+// 扩展实现
+class X extends NotificationSubscriberExtensionAbility {
+  onReceiveMessage(info: NotificationInfo): void   // ← 收通知
+  onCancelMessages(hashCodes: string[]): void
+}
+// 授权与订阅
+openSubscriptionSettings(context)   // 弹半模态授权页
+isUserGranted() / getUserGrantedEnabledBundles()
+subscribe([{ addr, type: SubscribeType.BLUETOOTH }])
+```
+
+`NotificationInfo` 能给到：`bundleName / appName / content{title,text} / deliveryTime / hashCode`。
+设计目标是**把手机通知转发到蓝牙设备**（手表/耳机/车机）—— `SubscribeType` 只有
+`BLUETOOTH = 0` 一个值，`subscribe()` 必须传蓝牙地址。
+
+**关键：API 全是公开的（`@systemapi` 计数为 0），但权限声明就装不上。**
+
+```
+① 声明 ohos.permission.SUBSCRIBE_NOTIFICATION → 安装直接失败
+   code:9568289 grant request permissions failed
+② 不声明权限、保留扩展注册     → 装得上，bm dump 也能看到
+   notificationSubscriber 类型（系统接受这个类型）
+③ 但运行时调用 API → 201 Permission denied
+```
+
+和 §5.0.11 的无障碍方案**一模一样**：`system_basic` + ACL 保护，调试证书
+（apl=normal）的 Profile 不含 ACL，连声明都不允许。
+
+**路二：下拉通知中心 + dumpLayout —— 通，但笨重**
+
+实测下拉通知栏后 `dumpLayout` 能拿到**完整的通知内容**：
+
+- 通知标题、正文、群名、发送者、相对时间
+- 顶部还有运营商、日期
+- 折叠组显示 `+13` 这样的数量
+
+实测抓到的内容示例（隐去隐私）：`<群名>, <发送者> : <正文>, <时间>`，
+以及 `已连接 USB 调试, 6 分钟前, 点击可停用 USB 调试。`
+
+节点结构按 y 坐标成组排列，每张卡片是一组 Text（标题在 y1~y2，正文紧随其后），
+可以按 y 区间切分。
+
+**配套的触发手段**：`hilog` 能看到"哪个应用发了通知"，但没有内容：
+
+```
+A01A01/com.ohos.sceneboard/NC_SW: NotificationSubscribeManager:
+  Update config for <uid>, label: <应用名>.
+```
+
+所以可行的 pipeline 是：
+
+```
+hilog 发现 PublishNotification 事件（拿到 bundleName / appName）
+  → 下拉通知中心
+  → dumpLayout 读全文
+  → 按 y 坐标切卡片，取最新的那几张
+  → 收回通知栏
+  → 转发出去
+```
+
+**代价（要跟用户讲清楚）**
+
+1. **下拉通知中心会打断用户**。如果用户正在用手机，屏幕突然被通知栏占满。
+   → 只能在屏幕关闭时做，或低频（几分钟一次）后台抓。
+2. 一次抓取 ≈ 下拉(0.4s) + dumpLayout(1.3s) + 收回(0.4s) ≈ 2 秒全屏占用。
+3. 锁屏状态下通知中心能否抓取，**尚未验证**（下次可测）。
+
+**其他途径（都不行）**
+
+- `notificationManager.getActiveNotifications()` —— 文档明确写 "of the current application"，
+  只能读自己的通知
+- `getActiveNotificationCount()` —— 同上
+- `ohos.permission.NOTIFICATION_CONTROLLER` —— system_core，更不可能
+- `ohos.permission.NOTIFICATION_SYSTEM_SUBSCRIBER` —— system_core，since 26，更不可能
+
+**保留的探针代码**：`ets/notifyprobe/NotifyProbeAbility.ets` + module.json5 的
+`notificationSubscriber` 扩展 + `Index.ets` 的 `probeNotification()`。
+留着的理由同 §5.0.11：不产生副作用，将来华为放开可复用。要清理删这三处。
+
 ### 5.0.3 修复「指令偶尔提示响应超时」（2026-11-05）
 
 用户反馈「试了几个指令，偶尔好用，偶尔就提示响应超时」。

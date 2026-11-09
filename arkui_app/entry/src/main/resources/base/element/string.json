@@ -14,5 +14,9 @@
   ,
     { "name": "adprobe_label", "value": "HMArkPriv 无障碍探针" },
     { "name": "adprobe_desc", "value": "用于验证无障碍事件能否被第三方应用接收" }
+  ,
+    { "name": "notifyprobe_label", "value": "HMArkPriv 通知探针" },
+    { "name": "notifyprobe_desc", "value": "用于验证能否接收其他应用的通知" },
+    { "name": "perm_notify_reason", "value": "接收通知以实现转发功能" }
   ]
 }
