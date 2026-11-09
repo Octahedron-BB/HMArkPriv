@@ -96,6 +96,7 @@ LOG_CHG="unknown"
 CHG_SRC="none"
 LAST_LOGGED=""
 LAST_PS_REFRESH=0
+LAST_WD_CHECK=0
 
 #   $1 = override（0/1）  $2 = timeout 毫秒
 write_screen_state() {
@@ -219,7 +220,12 @@ stay_awake_off() {
 # 不会误杀；又足够短，用户基本感知不到异常。
 # ------------------------------------------------------------------------------
 HEARTBEAT_FILE="${WORK_DIR}/.heartbeat"
+WD_HB_FILE="${WORK_DIR}/.wd.heartbeat"
+WD_PID_FILE="${WORK_DIR}/.wd.pid"
+PHASE_FILE="${WORK_DIR}/.phase"
 WATCHDOG_LOG="${WORK_DIR}/watchdog.log"
+# 记录本 daemon 的真实 PID（watchdog 用它判断主进程是否还活着）
+DAEMON_MAIN_PID="$$"
 # 用 $0 拿脚本自身路径（最可靠）。若是相对路径则用 WORK_DIR 补全，
 # 这样不论部署在 ${WORK_DIR}/daemon.sh 还是 ${WORK_DIR}/core/daemon.sh 都能重启自己。
 DAEMON_SELF="$0"
@@ -228,21 +234,48 @@ case "${DAEMON_SELF}" in
     *)  DAEMON_SELF="${WORK_DIR}/${DAEMON_SELF}" ;;
 esac
 
+# ------------------------------------------------------------------------------
+# 执行位置追踪
+#
+# 【为什么需要】这个 daemon 已经卡死四次，每次都要靠 ps/fd/wchan 反推停在哪，
+# 而且结论都只能"大概"。加一个阶段标记后，看门狗重启时会把它写进日志，
+# 下次打开 watchdog.log 就能直接看到 phase=[xxx]。
+#
+# 【开销】只在阶段变化时写一次小文件，正常循环里阶段在 7~8 个值之间轮转，
+# 每秒最多几次小写入，可忽略。
+# ------------------------------------------------------------------------------
+set_phase() {
+    [ "$1" = "${PHASE}" ] && return 0
+    PHASE="$1"
+    printf '%s' "${PHASE}" > "${PHASE_FILE}" 2>/dev/null
+}
+
 start_watchdog() {
-    # 已有 watchdog 在跑就退出（避免多实例叠加）
-    [ -f "${WORK_DIR}/.wd.pid" ] || : > "${WORK_DIR}/.wd.pid" 2>/dev/null
-    OLD_WD=$(timeout 2 cat "${WORK_DIR}/.wd.pid" 2>/dev/null)
-    if [ -n "${OLD_WD}" ] && kill -0 "${OLD_WD}" 2>/dev/null; then
-        return 0
+    # 【判断依据必须是 watchdog 自己的心跳，不能是 PID 文件】
+    # 旧实现把 `$$` 写进 .wd.pid —— 那是 daemon 的 PID（子 shell 里 $$ 仍是父 shell 的），
+    # 于是 `kill -0 <daemon pid>` 永远成功，start_watchdog 每次都直接 return。
+    # 结果：watchdog 一旦死掉就再也不会被拉起，daemon 卡死 27 小时无人管。
+    NOW=$(date +%s 2>/dev/null)
+    [ -z "${NOW}" ] && return 0
+    if [ -f "${WD_HB_FILE}" ]; then
+        WD_LAST=$(timeout 2 cat "${WD_HB_FILE}" 2>/dev/null)
+        [ -z "${WD_LAST}" ] && WD_LAST=0
+        # 心跳在 60 秒内 → watchdog 活着，不重复启动
+        if [ $((NOW - WD_LAST)) -le 60 ]; then
+            return 0
+        fi
     fi
 
     (
-        printf '%s' "$$" > "${WORK_DIR}/.wd.pid" 2>/dev/null
-        DAEMON_PID="$$"
+        # 先写一次心跳，让主循环立刻知道 watchdog 已就位
+        printf '%s' "$(date +%s 2>/dev/null)" > "${WD_HB_FILE}" 2>/dev/null
+        WD_DAEMON_PID="${DAEMON_MAIN_PID}"
         while true; do
-            sleep 20
-            # 主进程已退出 → watchdog 也该退出，让位给下一个
-            kill -0 "${DAEMON_PID}" 2>/dev/null || exit 0
+            sleep 15
+            printf '%s' "$(date +%s 2>/dev/null)" > "${WD_HB_FILE}" 2>/dev/null
+
+            # 主进程已退出 → watchdog 也退出，让新 daemon 启动自己的 watchdog
+            kill -0 "${WD_DAEMON_PID}" 2>/dev/null || exit 0
 
             HB=$(timeout 2 cat "${HEARTBEAT_FILE}" 2>/dev/null)
             NOW_WD=$(date +%s 2>/dev/null)
@@ -251,9 +284,11 @@ start_watchdog() {
 
             AGE=$((NOW_WD - HB))
             if [ "${AGE}" -gt 90 ]; then
-                printf '%s heartbeat stale %ss, restarting daemon\n' \
-                    "$(date '+%Y-%m-%d %H:%M:%S')" "${AGE}" >> "${WATCHDOG_LOG}" 2>/dev/null
-                kill -9 "${DAEMON_PID}" 2>/dev/null
+                # 记下卡死时的阶段，便于事后定位
+                STUCK_PHASE=$(timeout 2 cat "${PHASE_FILE}" 2>/dev/null)
+                printf '%s heartbeat stale %ss phase=[%s], restarting\n' \
+                    "$(date '+%Y-%m-%d %H:%M:%S')" "${AGE}" "${STUCK_PHASE}" >> "${WATCHDOG_LOG}" 2>/dev/null
+                kill -9 "${WD_DAEMON_PID}" 2>/dev/null
                 sleep 2
                 # 清掉单实例锁，否则新进程会拒绝启动
                 rm -f "${PID_FILE}" 2>/dev/null
@@ -264,6 +299,19 @@ start_watchdog() {
             fi
         done
     ) &
+    # 在父 shell 里 $! 才是子 shell 的真实 PID（用于日志/排查，判断存活靠心跳）
+    printf '%s' "$!" > "${WD_PID_FILE}" 2>/dev/null
+}
+
+# daemon 侧检查 watchdog 是否还活着（双向自愈）
+check_watchdog() {
+    NOW_WDCHK=$(date +%s 2>/dev/null)
+    [ -z "${NOW_WDCHK}" ] && return 0
+    WD_LAST=$(timeout 2 cat "${WD_HB_FILE}" 2>/dev/null)
+    [ -z "${WD_LAST}" ] && WD_LAST=0
+    if [ $((NOW_WDCHK - WD_LAST)) -gt 60 ]; then
+        start_watchdog
+    fi
 }
 
 # 状态恢复与清理
@@ -316,6 +364,8 @@ printf '{"framework":"HMArkPriv","status":"ready","pid":%d,"uid":%d}\n' "$$" "$(
 # 写一次心跳，然后启动看门狗
 printf '%s' "$(date +%s 2>/dev/null)" > "${HEARTBEAT_FILE}" 2>/dev/null
 HEARTBEAT_LAST=""
+PHASE=""
+set_phase "init"
 start_watchdog
 
 LAST_REQ_ID=""
@@ -554,6 +604,7 @@ run_and_reply() {
         WAITED=$((WAITED + 1))
     done
 
+    set_phase "cmd-wait"
     TIMED_OUT=0
     if kill -0 "${CMD_PID}" 2>/dev/null; then
         # 到点还活着 —— 这是个杀不死的进程，放弃等待。
@@ -779,8 +830,11 @@ process_slots() {
 # 主循环
 # ------------------------------------------------------------------------------
 while true; do
+    set_phase "loop"
+
     # ---- 协议 1：单文件（兼容旧客户端）----
     if [ -s "${REQ_FILE}" ]; then
+        set_phase "req-read"
         # 读取整个文件，支持多行指令。
         #
         # 这里不能用 ${RAW%%|*} / ${RAW#*|} 切分 —— 实测本机 sh 会把模式里的 '|'
@@ -808,6 +862,7 @@ ${LINE}"
     fi
 
     # ---- 协议 2：队列槽位（跨应用调用）----
+    set_phase "slots"
     process_slots
 
     # ---- 看门狗冻结（每约 2 秒检查一次）----
@@ -817,6 +872,7 @@ ${LINE}"
     FREEZE_CHECK_COUNTER=$((FREEZE_CHECK_COUNTER + 1))
     if [ "${FREEZE_CHECK_COUNTER}" -ge 40 ]; then
         FREEZE_CHECK_COUNTER=0
+        set_phase "frozen"
         check_frozen
     fi
 
@@ -836,9 +892,16 @@ ${LINE}"
             printf '%s' "${NOW}" > "${HEARTBEAT_FILE}" 2>/dev/null
         fi
 
+        # 反向保护：watchdog 也可能死掉，主循环定期确认它还活着
+        if [ $((NOW - LAST_WD_CHECK)) -ge 60 ]; then
+            LAST_WD_CHECK="${NOW}"
+            check_watchdog
+        fi
+
         # 探测：屏幕亮灭 + 充电状态（一次 hilog dump 拿两个信息）
         if [ $((NOW - LAST_PROBE)) -ge "${PROBE_INTERVAL}" ]; then
             LAST_PROBE="${NOW}"
+            set_phase "probe"
             probe_system_state
             OV=$(read_state_val override)
             TO=$(read_state_val timeout)
@@ -912,6 +975,7 @@ ${LINE}"
             fi
             CHG="${CHARGING_STATE}"
 
+            set_phase "decide"
             SHOULD="no"
             if [ "${TOGGLE}" = "true" ] && [ "${CHG}" = "yes" ]; then
                 SHOULD="yes"

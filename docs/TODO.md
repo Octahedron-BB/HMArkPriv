@@ -987,6 +987,64 @@ PROBE_LINE=$(hilog -x -e 'screenOn:' 2>/dev/null | tail -n 1)   # 无任何超�
 这次才发现 **timeout 对 D 状态进程完全无效** —— 唯一可靠的做法是
 「绝不在主循环里同步等待外部命令」，全部改成后台 + 读快照 + 心跳兜底。
 
+#### 5.0.10 看门狗自己死了，且死后无法复活（2026-11-09）
+
+用户报告"daemon 又卡住了，但冻结好像还好用"。
+
+**现场**：心跳停在 `2026-11-08 04:53:29`，停滞 **27.4 小时**；
+watchdog 日志最后一条是 `11-08 00:13:28`，之后再无记录。
+
+**根因：`.wd.pid` 存的是 daemon 的 PID，不是 watchdog 的**
+
+```sh
+( printf '%s' "$$" > .wd.pid; ... ) &      # 子 shell 里 $$ 仍是父 shell 的 PID
+# 检查时：
+OLD_WD=$(cat .wd.pid)                      # = daemon PID
+kill -0 "${OLD_WD}" && return 0            # daemon 活着 → 判定"watchdog 在跑" → 不启动
+```
+
+于是 watchdog 一旦死掉，`kill -0 <daemon pid>` 永远成功，`start_watchdog`
+永远直接 return —— **看门狗死了就再也不会被拉起**，形成永久空窗。
+
+之前几次能救回来纯属巧合：重启时 `.wd.pid` 恰好存着上一个已死的 daemon PID，
+`kill -0` 失败才启动了新 watchdog。
+
+**修法：双向心跳，彻底不用 PID 判活**
+
+| 角色 | 写 | 读 |
+|------|-----|-----|
+| daemon 主循环 | `.heartbeat`（每 1~2 秒） | `.wd.heartbeat`，超 60 秒 → 重新启动 watchdog |
+| watchdog | `.wd.heartbeat`（每 15 秒） | `.heartbeat`，超 90 秒 → kill -9 并重启 daemon |
+
+任一方死掉，另一方都能把它拉起来。`.wd.pid` 仍记录，但只用于排查，
+判活一律看心跳新鲜度。
+
+**顺带：执行位置追踪**
+
+已卡死四次，每次都要靠 ps/fd/wchan 反推停在哪，结论都只能"大概"。
+新增 `set_phase()`，在 `loop / req-read / slots / frozen / probe / decide / cmd-wait`
+几个阶段各打一个标记（只在变化时写，开销可忽略）。看门狗重启时会把阶段写进日志：
+
+```
+2026-11-09 08:24:32 heartbeat stale 92s phase=[loop], restarting
+```
+
+**真机验证（2026-11-09）**
+
+| 场景 | 结果 |
+|------|------|
+| 正常启动 | `.wd.pid` = 48742（watchdog 真身，非 daemon）✅ |
+| `kill -9` watchdog | 70 秒内主循环自动拉起新 watchdog（50599）✅ |
+| `kill -STOP` 主进程 | 92 秒后 watchdog 判定并重启（pid=51360）✅ |
+| 重启后命令 | 立即响应 `WD2_OK` ✅ |
+| 日志阶段标记 | `phase=[loop]` 正常记录 ✅ |
+
+**关于"冻结还好用"的澄清**
+
+`audit.log` 最后一条 `FREEZE` 是 `2026-11-07 22:37:59`，之后近 2 天零记录 ——
+**冻结实际早就停了**。用户感知"还好用"，是因为期间没有真正去打开那个被冻结的
+`com.huawei.hmos.ouc`；App 界面里的冻结列表只是文件内容，不代表实时生效。
+
 ### 5.0.3 修复「指令偶尔提示响应超时」（2026-11-05）
 
 用户反馈「试了几个指令，偶尔好用，偶尔就提示响应超时」。
