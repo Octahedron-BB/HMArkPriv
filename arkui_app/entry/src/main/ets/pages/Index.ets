@@ -16,6 +16,7 @@ import { BusDirManager } from '../services/BusDirManager';
 import { BatteryReader } from '../services/BatteryReader';
 import { accessibility } from '@kit.AccessibilityKit';
 import { NotifySubscriber } from '../notifyprobe/NotifyProbeAbility';
+import { notificationManager } from '@kit.NotificationKit';
 import { BatteryWatcher } from '../services/BatteryWatcher';
 import { TerminalConsole } from '../components/TerminalConsole';
 import { DaemonStatusCard } from '../components/DaemonStatusCard';
@@ -257,6 +258,47 @@ struct Index {
       hilog.info(0x9201, 'AccProbe', l);
     }
     this.probeNotification();
+    this.startNotifySelftest();
+  }
+
+  /**
+   * 【自测】定期发一条自己的通知，用来测量
+   * 「通知发布 → hilog 可见 → dumpLayout 抓到」的端到端延迟。
+   *
+   * 为什么用自己发的通知：可控、可重复，不必等真实消息。
+   * 它走的是同一条 ANS → NC 路径，所以测出的延迟对真实通知同样成立。
+   */
+  private startNotifySelftest(): void {
+    const ctx = getContext(this) as common.UIAbilityContext;
+    // 先申请通知权限：默认是关闭的，不申请 publish 会报 Notification disabled
+    notificationManager.requestEnableNotification(ctx).then(() => {
+      hilog.info(0x9203, 'NotifyTest', 'notification enabled');
+    }).catch((e: Error) => {
+      hilog.warn(0x9203, 'NotifyTest', `enable failed: ${e.message}`);
+    });
+    let n = 0;
+    const timer = setInterval(() => {
+      n++;
+      if (n > 6) {
+        clearInterval(timer);
+        return;
+      }
+      const req: notificationManager.NotificationRequest = {
+        id: 9000 + n,
+        content: {
+          notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
+          normal: {
+            title: `SELFTEST-${n}`,
+            text: `自测通知序号 ${n}，用于测量提取延迟`
+          }
+        }
+      };
+      notificationManager.publish(req).then(() => {
+        hilog.info(0x9203, 'NotifyTest', `published SELFTEST-${n}`);
+      }).catch((e: Error) => {
+        hilog.warn(0x9203, 'NotifyTest', `publish failed: ${e.message}`);
+      });
+    }, 4000);
   }
 
   /**

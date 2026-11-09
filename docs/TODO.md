@@ -1377,6 +1377,81 @@ hilog 发现 PublishNotification 事件（拿到 bundleName / appName）
 `notificationSubscriber` 扩展 + `Index.ets` 的 `probeNotification()`。
 留着的理由同 §5.0.11：不产生副作用，将来华为放开可复用。要清理删这三处。
 
+#### 5.0.16 通知实时提取：hilog 事件驱动 + 通知栏抓取，延迟 1.5~2.5 秒（2026-11-09）
+
+用户明确要求"通知来的时候实时提取"（不要定时轮询）。找到了一条可行的准实时链路。
+
+**关键突破：hilog 里有带包名的通知事件，延迟仅 51ms**
+
+```sh
+hilog -e 'updateKey|onNotificationTaskEvent'      # 不带 -x 才是阻塞式持续输出
+```
+
+```
+11:48:45.538  NotifyTest: published SELFTEST-1                                    ← App 调用
+11:48:45.589  NC_SW: NotificationBase: updateKey, newKey: __100_20020220_com.ctrip.harmonynext__-2096475327-2186
+```
+
+**发布到日志可见只差 51ms。** newKey 的结构是：
+
+```
+__<userId>_<uid>_<bundleName>__<notificationId>
+__100_20020220_com.ctrip.harmonynext__-2096475327-2186
+```
+
+能解析出 userId / uid / **包名** / 通知 ID。这是事件驱动的低成本触发信号，
+解决了"轮询耗电"的问题 —— 只在有通知时才做后续动作。
+
+**完整链路实测（自测通知，9 轮全中）**
+
+| 环节 | 耗时 |
+|------|------|
+| 通知发布 → hilog 可见 | **51ms** |
+| watcher 轮询发现（sleep 1 粒度） | 0~1s |
+| 高速 swipe 下拉 | <1s |
+| dumpLayout 读通知栏 | 1~2s |
+| keyEvent Back 收起 | <1s |
+| **端到端合计** | **1.5~2.5s** |
+
+实测流水（9/9 命中）：
+
+```
+通知发布 11:51:24.654 → 抓取完成 11:51:27   ≈ 2.3s
+通知发布 11:51:28.633 → 抓取完成 11:51:30   ≈ 1.4s
+通知发布 11:51:32.633 → 抓取完成 11:51:32   ≈ 0.4s
+```
+
+**性能关键：swipe 速度必须给 40000**
+
+```
+uitest uiInput swipe 630 30 630 1400 400     → 5 秒（慢速，会播完整下拉动画）
+uitest uiInput swipe 630 30 630 1400 40000   → <1 秒
+```
+
+光这一个参数就把总耗时从 8 秒压到 1~2 秒。
+
+**代价（无法回避）**
+
+下拉通知栏会**短暂占用整个屏幕 1~2 秒**。用户正在用手机时会看到闪一下。
+规避思路：
+- 锁屏状态下抓取（待验证）—— 用户看不到，最理想
+- 屏幕亮着但无人操作时抓取
+- 提供一个开关，让用户选"只在锁屏时抓"
+
+**与 Android 的差距**
+
+Android `NotificationListenerService` 是真正的毫秒级回调、不打扰用户。
+鸿蒙这套 ACL 权限墙把官方通道封死了（§5.0.15），所以只能做到 1.5~2.5 秒 +
+短暂打断。这是平台能力差异，不是实现问题。
+
+**已验证的相关细节**
+
+- `notificationManager.requestEnableNotification(context)` 需要 `UIAbilityContext`，
+  `getContext(this)` 要 `as common.UIAbilityContext`，否则编译报 No overload
+- 应用默认通知权限是关闭的，不申请 publish 直接报 `Notification disabled`
+- `hilog -e` 只能用一次，多个关键词要写成正则 `-e 'a|b'`（重复 -e 报 -37）
+- 自测通知已加在 `Index.ets` 的 `startNotifySelftest()`，发 6 条后自动停止
+
 ### 5.0.3 修复「指令偶尔提示响应超时」（2026-11-05）
 
 用户反馈「试了几个指令，偶尔好用，偶尔就提示响应超时」。
