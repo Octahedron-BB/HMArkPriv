@@ -1177,6 +1177,64 @@ sed 's/{"attributes":{/\n{"attributes":{/g' dump.json | grep '跳过' | head -1
 → 得到 4 个数字，set -- 后 $1$2$3$4 = x1 y1 x2 y2，中心 = ((x1+x3)/2, (y1+y3)/2)
 ```
 
+#### 5.0.13 卓易通容器探查：节点树对安卓应用同样可读（2026-11-09）
+
+用户指出重点应转向卓易通/出境易的安卓应用（鸿蒙原生应用开屏广告反而少）。
+
+**关键结论：卓易通里的安卓应用，dumpLayout 能正常抓到完整节点树。**
+
+启动卓易通的应用管理页抓树，看到的是标准 Android 视图层级：
+
+```
+android.widget.FrameLayout
+  androidx.recyclerview.widget.RecyclerView     [54,328][1206,2790]
+    android.view.ViewGroup  clickable=true      [54,1300][1206,1543]
+      android.widget.TextView                   [344,1356][560,1429] text="万步健康"
+```
+
+节点文字、bounds、clickable 全部正常。连安卓系统设置页（`com.android.settings`
+的「应用信息」）都能抓到完整文字。说明**容器把 ViewServer 之类的能力透传给了
+宿主 accessibility，抓树链路对安卓应用同样有效**。
+
+**包名与目录（实测）**
+
+| 名称 | 包名 | 说明 |
+|------|------|------|
+| 卓易通 | `com.droi.tong` | 容器管理 App，有 Install/Uninstall 等 WorkScheduler |
+| 卓易通商店 | `com.zhuoyi.appstore.lite` | 在容器内运行，应用列表的宿主 |
+| 出境易 | `com.easy.hmos.abroad` | 同类容器 |
+| 铁路12306 | `com.chinarailway.ticketingHM` | 鸿蒙原生，桌面第 3 屏 |
+| 万步健康 | `com.wanbu.dascom` | **安卓应用**，从 hilog 抓到真实包名 |
+| 大麦 | `cn.damai.hongmeng` | 鸿蒙原生 |
+| 携程 | `com.ctrip.harmonynext` | 鸿蒙原生，入口是 `CTEntryAbility` |
+
+**卓易通容器内已装应用（应用管理页实测）**
+
+智谱 / MacroDroid / 雀魂麻將(3.48GB) / 轻小说文库 / **万步健康(779MB)** /
+慕课网 / LSPatch / 公卫云健康(470MB) / Shizuku / Yahoo! / 公众号助手
+
+注意装了 **LSPatch** 和 **Shizuku** —— 这两个是 Android 侧的 hook 与提权工具，
+在容器内可用。将来若要在安卓侧做更强的广告拦截（Xposed 模块），这是现成的入口。
+
+**获取容器应用列表的两条路**
+
+1. **UI 抓树（可用）**：卓易通 → 我的 → 应用管理，dumpLayout 即可拿到全部
+   已装应用名与大小。缺点：只有显示名，没有包名，且需要滚动翻页。
+2. **hilog（可拿包名）**：`hilog -x -e '<关键词>'`，从
+   `BMS: com.wanbu.dascom not find` / `NmsBroker: GetFlags ... com.wanbu.dascom:10350`
+   这类行能拿到真实包名。这是目前唯一可用的"名称→包名"映射手段。
+
+**容器内的限制**
+
+- 宿主 `ps` 看不到容器内进程（PID namespace 隔离）
+- 容器内没有 `am` 命令（`/system/bin/am` 不存在），**无法用 shell 直接启动安卓应用**
+- `/data/virt_service/rgm_hmos/` Permission denied
+- 结论：**启动安卓应用只能靠点 UI**（卓易通列表项点进去是「应用信息」，
+  不是启动；万步健康也没有桌面图标，只能在卓易通里找启动入口）
+
+**待解决**：怎么可靠地启动卓易通里的安卓应用？列表项点击进的是详情页，
+需要找列表里的"打开"按钮或图标本体。这决定了能否在自然场景下测到广告。
+
 ### 5.0.3 修复「指令偶尔提示响应超时」（2026-11-05）
 
 用户反馈「试了几个指令，偶尔好用，偶尔就提示响应超时」。
